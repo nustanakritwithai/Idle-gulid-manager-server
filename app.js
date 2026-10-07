@@ -30,7 +30,7 @@ const state = {
   batches: [], selectedBatchId: null, batchDetail: null, pendingBatchCommand: null, batchBusy: false, rerunCommands: {}, comparison: null, compareIds: null, compareEpoch: 0,
   auditEntries: [], auditCursor: null, auditNextCursor: null, auditPage: 1, auditBusy: false, auditEpoch: 0, backupPolicy: null, backupCopies: [],
   runners: [], runnerReadiness: null, runnerRequestDirty: false, runnerBusy: false, runnerToggleBusy: false, pendingRunnerCommand: null, selectedRunnerMatchId: null, runnerMatch: null,
-  players: [], playerSettings: null, playerSearch: '', playerCursor: null, playerNextCursor: null, playerPage: 1, playerEpoch: 0, playerListBusy: false, playerMutationBusy: false,
+  players: [], playerSettings: null, playerArenaSettings: null, playerArenaDraftDirty: false, playerSearch: '', playerCursor: null, playerNextCursor: null, playerPage: 1, playerEpoch: 0, playerListBusy: false, playerMutationBusy: false,
   playback: null, refreshing: false, mutationBusy: false, restoreTarget: null, expiryTimer: null,
 };
 const requests = new Set();
@@ -216,7 +216,7 @@ async function navigate() {
   const [eyebrow, title, description, crumb] = ROUTES[state.route];
   text('page-eyebrow', eyebrow); text('page-title', title); text('page-description', description); text('breadcrumb-current', crumb);
   document.title = `${crumb} · Guild Arena`;
-  text('page-badge',state.route==='runners'?'MANAGER 1.3 · TEST ONLY':state.route==='players'?'PLAYER ACCOUNTS · V1.3':'PROTOTYPE V1');
+  text('page-badge',state.route==='runners'?'MANAGER 1.4 · TEST ONLY':state.route==='players'?'PLAYER ACCOUNTS · V1.4':'PROTOTYPE V1');
   clearError('page-error');
   if (state.token) await refresh();
 }
@@ -238,6 +238,7 @@ async function refresh(quiet = false) {
   if (route === 'security' && !state.auditBusy) { const epoch=state.auditEpoch; tasks.push({path:auditPath(state.auditCursor),assign:(data)=>{if(state.auditEpoch===epoch){state.auditEntries=list(data,'entries');state.auditNextCursor=data?.nextCursor ?? null;renderAudit();}}}); }
   if (route === 'players' && !state.playerMutationBusy) {
     const settingsEpoch=state.playerEpoch;tasks.push({path:'/player-settings',assign:(data)=>{if(settingsEpoch===state.playerEpoch){state.playerSettings=data;renderPlayerSettings();}}});
+    tasks.push({path:'/player-arena-settings',assign:(data)=>{if(settingsEpoch===state.playerEpoch&&!state.playerArenaDraftDirty){state.playerArenaSettings=data;renderPlayerArenaSettings();}}});
     if(!state.playerListBusy){const epoch=state.playerEpoch;tasks.push({path:playersPath(state.playerCursor),assign:(data)=>{if(epoch===state.playerEpoch){state.players=list(data,'players');state.playerNextCursor=data?.nextCursor??null;renderPlayers();}}});}
   }
   if (route === 'runners') {
@@ -885,8 +886,9 @@ function renderRunnerEvent(event,index){
 }
 
 function clearPlayersSession(){
-  state.players=[];state.playerSettings=null;state.playerSearch='';state.playerCursor=null;state.playerNextCursor=null;state.playerPage=1;state.playerEpoch+=1;state.playerListBusy=false;state.playerMutationBusy=false;
+  state.players=[];state.playerSettings=null;state.playerArenaSettings=null;state.playerArenaDraftDirty=false;state.playerSearch='';state.playerCursor=null;state.playerNextCursor=null;state.playerPage=1;state.playerEpoch+=1;state.playerListBusy=false;state.playerMutationBusy=false;
   $('player-search').value='';replace('players-list');replace('player-settings-summary');clearError('players-error');text('players-page-label','ยังไม่มีข้อมูล');$('players-next-button').disabled=true;$('registration-toggle-button').disabled=true;
+  replace('player-arena-settings-summary');$('player-fixture-toggle-button').disabled=true;for(const id of ['player-fixture-challenges','player-fixture-matchmaking']){$(id).checked=false;$(id).disabled=true;}
 }
 function playersPath(cursor){return '/players?limit=50'+(state.playerSearch?'&search='+encodeURIComponent(state.playerSearch):'')+(cursor?'&before='+encodeURIComponent(cursor):'');}
 function renderPlayerSettings(){
@@ -895,6 +897,18 @@ function renderPlayerSettings(){
   if(!data){replace('player-settings-summary',element('p','muted','รอข้อมูลการสมัครจาก API'));return;}
   button.textContent=data.registrationEnabled?'ปิดรับสมัครผู้เล่น':'เปิดรับสมัครผู้เล่น';
   replace('player-settings-summary',detailItem('รับสมัครบัญชีใหม่',data.registrationEnabled?'เปิดรับสมัคร':'ปิดรับสมัคร'),detailItem('Revision',data.revision,true),detailItem('จำนวนบัญชีสูงสุด',data.maxPlayers??'API ไม่ระบุ'),detailItem('อายุเซสชัน',Number.isFinite(data.sessionLifetimeSeconds)?(data.sessionLifetimeSeconds/3600)+' ชั่วโมง':'API ไม่ระบุ'));
+}
+function renderPlayerArenaSettings(){
+  const data=state.playerArenaSettings,disabled=!data||state.playerMutationBusy;$('player-fixture-toggle-button').disabled=disabled;
+  for(const [id,key] of [['player-fixture-challenges','fixtureChallengesEnabled'],['player-fixture-matchmaking','fixtureMatchmakingEnabled']]){$(id).disabled=disabled;if(!state.playerArenaDraftDirty)$(id).checked=data?.[key]===true;}
+  if(!data){replace('player-arena-settings-summary',element('p','muted','รอสถานะโหมดทดสอบจาก API'));return;}
+  replace('player-arena-settings-summary',detailItem('คำท้า TEST ONLY',data.fixtureChallengesEnabled?'เปิดรับคำท้าทดสอบ':'ปิดรับคำท้าทดสอบ'),detailItem('สุ่มจับคู่ TEST ONLY',data.fixtureMatchmakingEnabled?'เปิดรับคิวสุ่ม':'ปิดรับคิวสุ่ม'),detailItem('Revision',data.revision,true),detailItem('ประเภท','fixture-only · ไม่มีการต่อสู้จริง'),detailItem('ตัวรันเกม',data.realRunnerReady?'API ระบุพร้อม แต่หน้านี้ยังใช้ fixture':'ยังรอรับมอบ'));
+}
+function togglePlayerFixture(){
+  const settings=state.playerArenaSettings;if(!settings||state.playerMutationBusy)return;const fixtureChallengesEnabled=$('player-fixture-challenges').checked,fixtureMatchmakingEnabled=$('player-fixture-matchmaking').checked;
+  if(fixtureChallengesEnabled===settings.fixtureChallengesEnabled&&fixtureMatchmakingEnabled===settings.fixtureMatchmakingEnabled){state.playerArenaDraftDirty=false;notice('ค่าที่เลือกตรงกับสถานะปัจจุบันแล้ว');return;}
+  if(!window.confirm('บันทึกโหมด TEST ONLY: คำท้า '+(fixtureChallengesEnabled?'เปิด':'ปิด')+' · สุ่มจับคู่ '+(fixtureMatchmakingEnabled?'เปิด':'ปิด')+' ใช่หรือไม่? คิวสุ่มที่รออยู่จะสิ้นสุดและต้องเข้าคิวใหม่ ไม่มีการต่อสู้เกมจริง'))return;
+  return playerAdminMutation('/player-arena-settings',{fixtureChallengesEnabled,fixtureMatchmakingEnabled,revision:settings.revision,confirmation:'UPDATE PLAYER FIXTURE MODES'},'บันทึกโหมดทดสอบผู้เล่นแล้ว');
 }
 function renderPlayers(){
   const busy=state.playerMutationBusy||state.playerListBusy;
@@ -917,10 +931,10 @@ async function loadPlayersPage(cursor=null){
 }
 async function playerAdminMutation(path,body,message){
   if(state.playerMutationBusy)return;
-  state.playerMutationBusy=true;state.playerEpoch+=1;clearError('players-error');renderPlayers();renderPlayerSettings();
-  try{await api(path,{method:'POST',body});notice(message);const [settings,players]=await Promise.all([api('/player-settings'),api(playersPath(state.playerCursor))]);state.playerSettings=settings;state.players=list(players,'players');state.playerNextCursor=players?.nextCursor??null;}
+  state.playerMutationBusy=true;state.playerEpoch+=1;clearError('players-error');renderPlayers();renderPlayerSettings();renderPlayerArenaSettings();
+  try{await api(path,{method:'POST',body});notice(message);const [settings,players,arenaSettings]=await Promise.all([api('/player-settings'),api(playersPath(state.playerCursor)),api('/player-arena-settings')]);state.playerSettings=settings;state.playerArenaSettings=arenaSettings;state.players=list(players,'players');state.playerNextCursor=players?.nextCursor??null;}
   catch(error){showError('players-error',error);}
-  finally{state.playerMutationBusy=false;renderPlayers();renderPlayerSettings();}
+  finally{state.playerMutationBusy=false;state.playerArenaDraftDirty=false;renderPlayers();renderPlayerSettings();renderPlayerArenaSettings();}
 }
 function togglePlayerRegistration(){
   const settings=state.playerSettings;if(!settings||state.playerMutationBusy)return;const enabled=!settings.registrationEnabled;
@@ -943,6 +957,7 @@ $('players-search-form').addEventListener('submit',(event)=>{event.preventDefaul
 $('players-next-button').addEventListener('click',()=>loadPlayersPage(state.playerNextCursor));
 $('players-latest-button').addEventListener('click',()=>{if(state.playerListBusy||state.playerMutationBusy)return;state.playerSearch='';$('player-search').value='';loadPlayersPage();});
 $('registration-toggle-button').addEventListener('click',togglePlayerRegistration);
+$('player-fixture-toggle-button').addEventListener('click',togglePlayerFixture);for(const id of ['player-fixture-challenges','player-fixture-matchmaking'])$(id).addEventListener('change',()=>{state.playerArenaDraftDirty=true;});
 $('login-form').addEventListener('submit',login);
 $('logout-button').addEventListener('click',logout);
 $('topbar-logout-button').addEventListener('click',logout);

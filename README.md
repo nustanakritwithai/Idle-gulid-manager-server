@@ -1,6 +1,6 @@
 # Guild Arena — Server Manager Dashboard
 
-Dashboard ภาษาไทยสำหรับ Guild Arena v1.3 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ข้อมูลและคำสั่งจัดการเรียก Backend บน VPS ซึ่งตรวจสิทธิ์แอดมิน มีหน้าบัญชีผู้เล่นแยกที่ player.html และใช้สิทธิ์ผู้เล่นเฉพาะของตน
+Dashboard ภาษาไทยสำหรับ Guild Arena v1.4 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ข้อมูลและคำสั่งจัดการเรียก Backend บน VPS ซึ่งตรวจสิทธิ์แอดมิน มีหน้าบัญชีผู้เล่นแยกที่ player.html และใช้สิทธิ์ผู้เล่นเฉพาะของตน
 
 ## เปิดใช้งาน
 
@@ -155,3 +155,35 @@ player.js เก็บ token ในหน่วยความจำของ mo
 เปิดรับสมัครตามค่าเริ่มต้นของ Backend แต่หน้าเว็บใช้สถานะ API จริงเสมอ หากตรวจสถานะไม่ได้จะปิดปุ่มสมัครและแจ้งข้อผิดพลาด Backend จำกัดอัตราสมัคร/ล็อกอิน/คำสั่งสำคัญ เมื่อถูกจำกัดจะแสดงเหตุผลจาก API โดยไม่ลองส่งอัตโนมัติ
 
 Workflow GitHub Pages ตรวจ syntax player.js และรวม player.html/player.js/player.css ใน public artifact ด้วย การทดสอบบัญชีใหม่ใช้ฐาน staging แยกจากข้อมูลผู้เล่นจริง
+
+## Manager 1.4 — ทีม คำท้า และสุ่มจับคู่ทดสอบ
+
+player.html เพิ่มพื้นที่ทีมของฉัน คำท้าทดสอบ สุ่มจับคู่ และผลทดสอบร่วมของฉัน ทุกงานเป็น TEST ONLY เพื่อทดสอบการรับส่งข้อมูล ยังไม่ใช่ผลต่อสู้เกมจริง หน้าเว็บไม่เปิดให้เลือก seed, arena หรือ runner เอง และไม่ใช้เหตุการณ์ Fixture สรุปสมดุลเกม
+
+ทีมใช้ JSON envelope {schemaVersion:1,name,contentVersion,characters:[{id,data:{}}]} จำนวน 1–3 ตัวละคร สูงสุด 16 KiB ข้อมูล data เก็บตามต้นฉบับ ทีมได้รับการตรวจเฉพาะโครงสร้างและยังเป็น client-submitted ผู้เล่นโหลดตัวอย่าง fixture-v1 เพื่อเติมฟอร์มได้ แต่ต้องกดบันทึกก่อนสร้างข้อมูลจริง แก้ไขทีมด้วย revision ล่าสุดและเปิดประวัติ revision แบบอ่านอย่างเดียวได้
+
+คำท้าระบุผู้รับด้วย username และเลือกทีมที่บันทึกไว้ ฝ่ายรับเลือกทีมและยืนยัน ACCEPT TEST CHALLENGE ก่อนเซิร์ฟเวอร์สร้างแมตช์ ทั้งสองฝ่ายดูเฉพาะคำท้าและแมตช์ของตนเอง ฝ่ายรับปฏิเสธได้ ฝ่ายส่งยกเลิกได้ก่อนตอบรับ หากคำยินยอมสิ้นสุดเพราะการเปลี่ยนรหัส/เพิกถอนเซสชัน/ระงับบัญชี ให้ส่งคำท้าใหม่ตามข้อผิดพลาด CONSENT_INVALIDATED จากเซิร์ฟเวอร์
+
+คิวสุ่มให้ผู้เล่นยืนยัน JOIN TEST MATCHMAKING ก่อนเข้าคิว ไม่กรอกชื่อคู่แข่ง เซิร์ฟเวอร์สุ่มจากผู้เล่นที่รอและเข้ากันได้ มีคิวรอได้ 1 รายการต่อบัญชี อายุ 10 นาที ทีมและ revision ล็อกตอนเข้าคิว เมื่อจับคู่แล้วเปิดผลจากประวัติร่วมได้ การลองคำสั่งเดิมใช้คีย์เดิมแม้คิวสิ้นสุดแล้ว ต้องเริ่มคำสั่งคิวใหม่เพื่อเข้ารอบใหม่ หากยกเลิกแพ้การจับคู่ หน้าเว็บอ่านสถานะล่าสุดและแสดงแมตช์แทนการอ้างว่ายกเลิกสำเร็จ
+
+แอดมินเลือกเปิด/ปิดคำท้าและสุ่มจับคู่แยกกันจาก #players ส่ง fixtureChallengesEnabled และ fixtureMatchmakingEnabled ครบทั้งสองค่าพร้อม shared revision และ confirmation UPDATE PLAYER FIXTURE MODES ผ่าน /player-arena-settings ทั้งสองโหมดเริ่มต้นปิด การแก้ config ทำให้คิวสุ่มเดิม invalidated ต้องเข้าคิวใหม่ และไม่เปลี่ยนทะเบียน manager-fixture เดิม ตัวทดสอบ manager-fixture ต้องเปิดและพร้อมรับงานด้วยจึงจะสร้างงานสำเร็จ ตัวรันเกมจริงยังรอรับมอบ
+
+| คำขอ | ขอบเขต |
+| --- | --- |
+| GET /player/arena/config | สถานะ fixture-only และ limits ของผู้เล่น |
+| GET/POST /player/teams | ทีมที่บัญชีนี้เป็นเจ้าของ; POST ใช้ Idempotency-Key |
+| GET/PUT /player/teams/:id | อ่านทีม/บันทึก {revision,team} |
+| GET /player/teams/:id/revisions | ประวัติ revision พร้อม hash |
+| GET /player/teams/:id/revisions/:revision | ข้อมูลรุ่นที่เลือกแบบอ่านอย่างเดียว |
+| GET/POST /player/challenges | คำท้าของฉัน; POST {mode:'fixture',opponentUsername,teamId,teamRevision} + Idempotency-Key |
+| GET /player/challenges/:id | รายละเอียดคำท้าที่เป็นคู่ทดสอบ |
+| POST /player/challenges/:id/accept | {revision,teamId,teamRevision,confirmation} + Idempotency-Key |
+| POST /player/challenges/:id/decline หรือ /cancel | {revision} |
+| POST /player/arena/queue | {mode:'fixture',teamId,teamRevision,confirmation:'JOIN TEST MATCHMAKING'} + Idempotency-Key |
+| GET /player/arena/queue/current | {entry} ล่าสุด รวม waiting/matched/cancelled/expired/invalidated |
+| GET /player/arena/queue/:id | คิวของเจ้าของเท่านั้น |
+| POST /player/arena/queue/:id/cancel | {revision} |
+| GET /player/matches และ /player/matches/:id | ผลที่บัญชีนี้เข้าร่วม แสดงทีมตนเองและเฉพาะข้อมูลคู่ทดสอบที่ API อนุญาต |
+| GET/POST /player-arena-settings | สิทธิ์แอดมิน; ส่งทั้งสองค่า boolean พร้อม revision และ UPDATE PLAYER FIXTURE MODES |
+
+player-arena.js เรียก API ผ่านเซสชันใน player.js ไม่มีสำเนา token หรือ storage เพิ่ม คีย์สร้างทีม/สร้างคำท้า/ยอมรับ/เข้าคิวอยู่ใน memory และเทียบ JSON แบบเรียง object keys เพื่อให้ลองคำสั่งเดิมหลังเครือข่ายขัดข้องได้โดยไม่สร้างซ้ำ ล้างข้อมูลทุกหน้าและคีย์เมื่อออกจากระบบ การติดตามคิว waiting และแมตช์ queued/running ทำทุก 5 วินาทีไม่เกิน 60 วินาที เฉพาะเมื่อเปิดผลนั้นอยู่ หยุดเมื่อเปลี่ยนหน้า ซ่อนหน้า หรือ logout แล้วผู้เล่นกดโหลดผลต่อได้เอง

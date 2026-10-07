@@ -1,8 +1,10 @@
 import {API_BASE} from './config.js';
+import {createPlayerArena} from './player-arena.js';
 
 const $=id=>document.getElementById(id);
 const state={apiBase:'',token:null,player:null,expiresAt:null,config:null,session:0,busy:false,refreshing:false,configEpoch:0,expiryTimer:null,tab:'login'};
 const requests=new Set();
+let arenaController=null;
 const dateFormatter=new Intl.DateTimeFormat('th-TH',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Bangkok'});
 const passwordFields=['player-login-password','player-register-password','player-register-confirm','player-current-password','player-new-password','player-confirm-password','player-revoke-password'];
 const errorIds=['player-login-error','player-register-error','player-password-error','player-revoke-error','player-profile-error','player-config-error'];
@@ -24,19 +26,20 @@ function switchTab(tab){
 }
 function setBusy(busy){
   state.busy=busy;
-  document.querySelectorAll('form button,form input,.player-auth-tabs button').forEach(node=>{node.disabled=busy;});
+  document.querySelectorAll('#player-auth-view form button,#player-auth-view form input,#player-view-profile form button,#player-view-profile form input,.player-auth-tabs button').forEach(node=>{node.disabled=busy;});
   $('player-logout-button').disabled=busy;$('player-refresh-button').disabled=busy||state.refreshing;
   $('player-register-button').disabled=busy||state.config?.registrationEnabled!==true;
+  arenaController?.setAccountBusy(busy);
 }
 function passwordPolicy(){return {min:state.config?.passwordMinLength??15,max:state.config?.passwordMaxLength??128};}
 function checkPassword(password){const {min,max}=passwordPolicy();const length=Array.from(password).length;if(length<min||length>max)throw new Error('รหัสผ่านต้องมี '+min+'–'+max+' ตัวอักษร โดยนับอักขระ Unicode');}
 function checkUsername(value){const name=value.trim();if(!/^[A-Za-z0-9_.-]{3,32}$/.test(name))throw new Error('ชื่อผู้ใช้ต้องมี 3–32 ตัวอักษร ใช้ A–Z, a–z, 0–9, _ . - เท่านั้น');return name.toLowerCase();}
 function stamp(value){if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?'—':dateFormatter.format(date);}
-async function api(path,{method='GET',body,auth=true,timeout=20000}={}){
+async function api(path,{method='GET',body,auth=true,timeout=20000,headers={}}={}){
   if(auth&&!state.token)throw new Error('กรุณาเข้าสู่ระบบผู้เล่นอีกครั้ง');
   const session=state.session,controller=new AbortController();requests.add(controller);const timer=setTimeout(()=>controller.abort(),timeout);
   try{
-    const response=await fetch(state.apiBase+'/api/v1'+path,{method,credentials:'omit',cache:'no-store',redirect:'error',signal:controller.signal,headers:{Accept:'application/json',...(body===undefined?{}:{'Content-Type':'application/json'}),...(auth?{Authorization:'Bearer '+state.token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
+    const response=await fetch(state.apiBase+'/api/v1'+path,{method,credentials:'omit',cache:'no-store',redirect:'error',signal:controller.signal,headers:{...headers,Accept:'application/json',...(body===undefined?{}:{'Content-Type':'application/json'}),...(auth?{Authorization:'Bearer '+state.token}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})});
     let data=null;if(response.status!==204){if(!(response.headers.get('content-type')||'').includes('application/json'))throw new Error('เซิร์ฟเวอร์ตอบรูปแบบที่ไม่รองรับ (HTTP '+response.status+')');data=await response.json();}
     if(session!==state.session)throw new Error('เซสชันนี้สิ้นสุดแล้ว');
     if(!response.ok){
@@ -55,6 +58,7 @@ async function api(path,{method='GET',body,auth=true,timeout=20000}={}){
 function endSession(message='',isError=false){
   state.token=null;state.player=null;state.expiresAt=null;state.session+=1;clearTimeout(state.expiryTimer);state.expiryTimer=null;
   requests.forEach(controller=>controller.abort());requests.clear();clearPasswords();errorIds.forEach(clearError);
+  arenaController?.clear();
   $('player-profile').replaceChildren();text('player-profile-name','บัญชีผู้เล่น');$('player-account-view').hidden=true;$('player-auth-view').hidden=false;switchTab('login');flash(message,isError);
 }
 function applySession(data){
@@ -62,6 +66,7 @@ function applySession(data){
   state.token=data.token;state.player=data.player;state.expiresAt=data.expiresAt;state.session+=1;clearTimeout(state.expiryTimer);
   const expiry=new Date(data.expiresAt).getTime()-Date.now();if(Number.isFinite(expiry))state.expiryTimer=setTimeout(()=>endSession('เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง',true),Math.max(0,Math.min(expiry,2147483647)));
   clearPasswords();errorIds.forEach(clearError);$('player-auth-view').hidden=true;$('player-account-view').hidden=false;renderProfile();window.scrollTo(0,0);
+  void arenaController?.start();
 }
 function renderProfile(){
   const player=state.player;if(!player)return;
@@ -116,6 +121,7 @@ async function revokeSessions(event){
   catch(error){if(state.token)showError('player-revoke-error',error);else flash(error.message,true);}finally{clearPasswords();setBusy(false);}
 }
 
+arenaController=createPlayerArena({api,getPlayer:()=>state.player,notify:flash});
 $('player-api-url').value=API_BASE;
 $('player-api-form').addEventListener('submit',loadConfig);
 $('player-login-form').addEventListener('submit',event=>authenticate(event,false));
@@ -130,4 +136,5 @@ for(const tab of ['login','register']){
 }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.token)refreshProfile();});
 window.addEventListener('pagehide',()=>endSession());
+window.addEventListener('beforeunload',event=>{if(state.token&&arenaController?.isDirty()){event.preventDefault();event.returnValue='';}});
 loadConfig();
