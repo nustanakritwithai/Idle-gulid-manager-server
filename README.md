@@ -1,6 +1,6 @@
 # Guild Arena — Server Manager Dashboard
 
-Dashboard ภาษาไทยสำหรับ Guild Arena v1.1 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ส่วนข้อมูลและคำสั่งจัดการทุกอย่างเรียก Backend บน VPS ซึ่งต้องยืนยันสิทธิ์แอดมิน
+Dashboard ภาษาไทยสำหรับ Guild Arena v1.2 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ส่วนข้อมูลและคำสั่งจัดการทุกอย่างเรียก Backend บน VPS ซึ่งต้องยืนยันสิทธิ์แอดมิน
 
 ## เปิดใช้งาน
 
@@ -103,3 +103,25 @@ winRateA และ winRateB เป็นเปอร์เซ็นต์ 0–10
 ตารางเหตุการณ์ รายการแมตช์ในชุด Audit และสำเนา Backup จำกัดความสูงและเลื่อนภายในกรอบ พร้อมหัวตารางตรึง รองรับมือถือโดยไม่ขยายความกว้างทั้งหน้า
 
 การสำรองตามเวลาใน VPS ทำงานอิสระจาก Codex app ส่วนการส่งสำเนาไป Google Drive ใช้ Codex app ที่ต้องเปิดอยู่และเชื่อม Drive ได้ เมื่อแอปปิดหรือเชื่อมต่อไม่ได้ สำเนานอก VPS อาจค้างส่ง ให้ตรวจสถานะและ verifiedAt ของสำเนาจริง ชื่อชุดทดลองจำกัด 80 ตัวอักษรตาม Backend และ stats.speed อนุญาต 0 ตามกติกาต้นแบบ
+
+## Manager 1.2 — เตรียมรอรับตัวรันเกมจริง
+
+หน้า “เชื่อมตัวรัน” แสดงทะเบียนตัวรัน สถานะรับมอบ และรายการที่รอทีมเกมจาก API ตัวรันเกมจริงยังไม่พร้อม และสัญญาข้อมูลยังเป็นฉบับร่างที่ทีมเกมต้องรับรอง การมี Manager หรือผ่าน Fixture ไม่ใช่หลักฐานว่า PvP พร้อมใช้งาน
+
+ตัวในระบบชื่อ manager-fixture เป็นตัวทดสอบช่องทางรับส่งข้อมูลเท่านั้น ไม่มีตรรกะต่อสู้ เริ่มต้นปิดไว้ การเปิดหรือปิดต้องยืนยันก่อนส่งคำขอ พร้อม revision และ confirmation เพื่อให้ Backend ตรวจและบันทึก Audit ตัวรันเกมที่ยังไม่รับมอบไม่มีปุ่มเปิดใช้
+
+โหลดคำขอตัวอย่างจาก GET /runner-fixture ก่อนแก้ไขหรือส่ง JSON หน้าเว็บตรวจว่าเป็น object และมีตัวละคร 1–3 ตัวต่อฝ่าย ส่วนข้อมูลเกมในแต่ละตัวละครและ arena ส่งตามต้นฉบับโดยไม่ตีความสเตตัส สกิล อุปกรณ์ หรือแผนที่ Backend เป็นผู้ตรวจสัญญาขั้นสุดท้าย ไม่มี map editor หรือสกิลเกมที่สร้างเพิ่มใน Dashboard
+
+| คำขอ | ข้อมูลหลัก |
+| --- | --- |
+| GET `/runners` | `{runners,readiness}` โดย readiness แยก realRunnerReady และ testRunnerEnabled |
+| GET `/runner-fixture` | `{request}` ซึ่งใช้เป็น body ของ runner-matches ได้โดยตรง |
+| POST `/runners/:id/enabled` | `{enabled,revision,confirmation}` confirmation เป็น ENABLE TEST RUNNER หรือ DISABLE RUNNER |
+| POST `/runner-matches` | คำขอ Fixture + Idempotency-Key → `{matchId,jobId,status,reused}` |
+| GET `/matches/:id` | รายละเอียดชนิด runner พร้อม input/events/result/durationMs |
+| GET `/matches/:id/snapshot` | snapshotSchemaVersion 2, kind runner, metadata ของตัวรันและ versions ที่ล็อกไว้ |
+| POST `/matches/:id/replay-checks` | Backend ตรวจซ้ำด้วยชนิดและเวอร์ชันตัวรันเดิม |
+
+คำสั่งซ้ำใช้ Idempotency-Key ในหน่วยความจำ โดยเทียบ JSON ที่เรียง object keys แล้ว การสลับลำดับ key หรือปรับ whitespace จึงไม่สร้างคำสั่งใหม่ กด “เริ่มคำสั่งทดสอบใหม่” เมื่อต้องการส่งเป็นงานใหม่อย่างตั้งใจ
+
+ประวัติและ Snapshot แยก kind runner ออกจาก prototype-v1 งาน Fixture มีป้าย TEST ONLY และแสดง durationMs ตามผลตัวรัน เหตุการณ์ใหม่แสดงชนิด เวลา และ JSON ตามต้นฉบับ ไม่ใช้ตัวแสดงผลโจมตี/สกิล/HP ของ prototype ไปตีความ เหตุการณ์และผล Fixture ไม่ใช่ข้อมูลสำหรับสรุปสมดุลเกม

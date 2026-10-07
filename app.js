@@ -6,6 +6,7 @@ const ROUTES = {
   teams: ['TEAM WORKSHOP', 'ทีมจำลอง', 'จัดสเตตัส อุปกรณ์ และสกิลให้ทีม 3 ตัวละคร', 'ทีมจำลอง'],
   match: ['BATTLE SIMULATOR', 'เริ่มการต่อสู้', 'เลือกสองทีม พร้อม seed และกติกาที่ตรวจสอบย้อนหลังได้', 'เริ่มการต่อสู้'],
   batches: ['EXPERIMENT LAB', 'ชุดทดลองและเปรียบเทียบ', 'ทดสอบหลาย seed วัดอัตราชนะ และเปรียบเทียบผลจาก snapshot ที่ล็อกไว้', 'ชุดทดลอง'],
+  runners: ['RUNNER HANDOFF', 'เชื่อมตัวรัน', 'เตรียม Manager และตรวจช่องทางรับส่งข้อมูล รอรับมอบตัวรันเกมจริง', 'เชื่อมตัวรัน'],
   security: ['ACCOUNT & SECURITY', 'บัญชีและความปลอดภัย', 'จัดการรหัสผ่าน เซสชัน และตรวจบันทึกการใช้งานแอดมิน', 'ความปลอดภัย'],
   history: ['BATTLE ARCHIVE', 'ประวัติแมตช์', 'ติดตามผลและเปิดดูรายละเอียดของแต่ละการทดลอง', 'ประวัติแมตช์'],
   replay: ['SNAPSHOT & REPLAY', 'Snapshot และรีเพลย์', 'สำรวจเหตุการณ์และตรวจว่าการจำลองซ้ำให้ผลตรงกัน', 'Snapshot และรีเพลย์'],
@@ -16,6 +17,7 @@ const STATE_LABELS = {
   queued: 'รอประมวลผล', pending: 'รอประมวลผล', running: 'กำลังทำงาน', processing: 'กำลังทำงาน',
   succeeded: 'สำเร็จ', completed: 'สำเร็จ', success: 'สำเร็จ', failed: 'ล้มเหลว', error: 'ผิดพลาด',
   online: 'ออนไลน์', ok: 'พร้อมใช้งาน', healthy: 'พร้อมใช้งาน', missing: 'ไม่พบสัญญาณ', offline: 'ออฟไลน์',
+  unavailable: 'ยังไม่พร้อม', 'awaiting-handoff': 'รอรับมอบ', 'test-only': 'ทดสอบเท่านั้น', enabled: 'เปิดใช้งาน',
   disabled: 'ปิดใช้งาน', configured: 'ตั้งค่าแล้ว', unconfigured: 'ยังไม่ตั้งค่า', degraded: 'ต้องตรวจสอบ', uploaded: 'อัปโหลดแล้ว', deleted: 'ลบตามนโยบายแล้ว', uploading: 'กำลังอัปโหลด', partial: 'สำเร็จบางส่วน',
   creating: 'กำลังสร้าง', passed: 'ผ่าน', verified: 'ผ่านการตรวจสอบ', mismatch: 'ผลไม่ตรงกัน', ready: 'พร้อมใช้งาน',
 };
@@ -26,6 +28,7 @@ const state = {
   selectedMatchId: null, detail: null, snapshot: null, snapshotId: null, eventIndex: 0,
   batches: [], selectedBatchId: null, batchDetail: null, pendingBatchCommand: null, batchBusy: false, rerunCommands: {}, comparison: null, compareIds: null, compareEpoch: 0,
   auditEntries: [], auditCursor: null, auditNextCursor: null, auditPage: 1, auditBusy: false, auditEpoch: 0, backupPolicy: null, backupCopies: [],
+  runners: [], runnerReadiness: null, runnerRequestDirty: false, runnerBusy: false, runnerToggleBusy: false, pendingRunnerCommand: null, selectedRunnerMatchId: null, runnerMatch: null,
   playback: null, refreshing: false, mutationBusy: false, restoreTarget: null, expiryTimer: null,
 };
 const requests = new Set();
@@ -154,7 +157,7 @@ async function api(path, options = {}) {
 function endSession(message = '') {
   state.token = null; state.session += 1; state.username = ''; state.status = null;
   state.teams = []; state.matches = []; state.jobs = []; state.backups = []; state.restoreTests = [];
-  clearV11Session();
+  clearV11Session(); clearRunnerSession();
   state.snapshot = null; state.snapshotId = null; state.detail = null; state.selectedMatchId = null;
   state.pendingCommand = null; state.restoreTarget = null; state.refreshing = false;
   state.editTeamId = null; state.editRevision = null; state.teamDirty = false;
@@ -211,6 +214,7 @@ async function navigate() {
   const [eyebrow, title, description, crumb] = ROUTES[state.route];
   text('page-eyebrow', eyebrow); text('page-title', title); text('page-description', description); text('breadcrumb-current', crumb);
   document.title = `${crumb} · Guild Arena`;
+  text('page-badge',state.route==='runners'?'MANAGER 1.2 · TEST ONLY':'PROTOTYPE V1');
   clearError('page-error');
   if (state.token) await refresh();
 }
@@ -230,6 +234,10 @@ async function refresh(quiet = false) {
     if (state.compareIds) { const epoch=state.compareEpoch; state.compareIds.forEach((id,index) => tasks.push({ path:'/batches/'+encodeURIComponent(id), assign:(data)=>{ if(state.compareEpoch===epoch && state.comparison) { state.comparison[index]=data?.batch || data; renderComparison(); } } })); }
   }
   if (route === 'security' && !state.auditBusy) { const epoch=state.auditEpoch; tasks.push({path:auditPath(state.auditCursor),assign:(data)=>{if(state.auditEpoch===epoch){state.auditEntries=list(data,'entries');state.auditNextCursor=data?.nextCursor ?? null;renderAudit();}}}); }
+  if (route === 'runners') {
+    tasks.push({path:'/runners',assign:(data)=>{state.runners=list(data,'runners');state.runnerReadiness=data?.readiness??null;renderRunners();}});
+    if(state.selectedRunnerMatchId){const id=state.selectedRunnerMatchId;tasks.push({path:'/matches/'+encodeURIComponent(id),assign:(data)=>{if(state.selectedRunnerMatchId===id){state.runnerMatch=data?.match||data;renderRunnerMatch();}}});}
+  }
   if (route === 'jobs') tasks.push({ path: '/jobs', assign: (data) => { state.jobs = list(data, 'jobs'); renderJobs(); } });
   if (route === 'backups') {
     tasks.push({ path: '/backup-policy', assign: (data) => { state.backupPolicy=data; renderBackupPolicy(); } });
@@ -272,7 +280,7 @@ function renderStatus() {
   $('connection-badge').classList.toggle('offline', !okay);
   $('connection-badge').lastElementChild.textContent = apiStatus ? `API ${label(apiStatus)}` : 'API ตอบกลับแล้ว';
 }
-function matchName(match) { return `${match.teamAName || match.input?.teamA?.name || 'ฝ่าย A'}  ×  ${match.teamBName || match.input?.teamB?.name || 'ฝ่าย B'}`; }
+function matchName(match) { if(isRunnerRecord(match))return runnerCaption(match); return `${match.teamAName || match.input?.teamA?.name || 'ฝ่าย A'}  ×  ${match.teamBName || match.input?.teamB?.name || 'ฝ่าย B'}`; }
 function winnerText(winner) { return winner === 'A' || winner === 'teamA' ? 'ฝ่าย A ชนะ' : winner === 'B' || winner === 'teamB' ? 'ฝ่าย B ชนะ' : winner === 'draw' || winner === 'tie' ? 'เสมอ' : winner ? asText(winner) : 'ยังไม่มีผล'; }
 function renderMatches() {
   const recent = state.matches.slice(0, 5);
@@ -281,7 +289,7 @@ function renderMatches() {
     const row = element('div', 'recent-row'); const main = element('div', 'recent-main');
     const open = element('button', 'text-link', matchName(match)); open.type = 'button'; open.style.border = '0'; open.style.background = 'transparent'; open.style.padding = '0'; open.style.textAlign = 'left';
     open.addEventListener('click', () => openMatch(match.id));
-    main.append(open, element('small', '', `${stamp(match.createdAt)} · ${winnerText(match.winner)}`));
+    main.append(open, element('small', '', `${stamp(match.createdAt)} · ${matchOutcome(match)}`));
     row.append(element('span', 'recent-mark', '⚔'), main, pill(match.status)); return row;
   }));
   const selected = $('match-filter').value;
@@ -289,7 +297,8 @@ function renderMatches() {
   if (!records.length) replace('match-history', empty('ไม่พบแมตช์', selected === 'all' ? 'ผลการทดลองจะปรากฏที่นี่เมื่อคุณเริ่มการต่อสู้' : 'ยังไม่มีแมตช์ตามสถานะที่เลือก', 'match', 'เริ่มการต่อสู้ ↗'));
   else replace('match-history', table(['แมตช์ / ทีม', 'สถานะ', 'ผล', 'เริ่มเมื่อ', ''], records.map((match) => {
     const id = element('div'); id.append(element('span', '', matchName(match)), element('span', 'subtext mono', match.id));
-    return [id, pill(match.status), winnerText(match.winner), stamp(match.createdAt), action('รายละเอียด', () => openMatch(match.id))];
+    if(isRunnerRecord(match))id.append(element('span','subtext',runnerIsTest(match)?'TEST ONLY · ทดสอบตัวเชื่อมต่อ':'งานตัวรัน'));
+    return [id, pill(match.status), matchOutcome(match), stamp(match.createdAt), action('รายละเอียด', () => openMatch(match.id))];
   })));
 }
 
@@ -413,6 +422,7 @@ async function openMatch(id) {
 }
 function renderMatchDetail() {
   const match=state.detail; if(!match) return;
+  if(isRunnerRecord(match)){renderRunnerMatchDetail(match);return;}
   $('match-detail-panel').hidden=false;
   const grid=element('div','match-detail-grid');
   grid.append(detailItem('รหัสแมตช์',match.id || state.selectedMatchId,true),detailItem('สถานะ',label(match.status)),detailItem('ทีม',matchName(match)),detailItem('ผล',winnerText(match.result?.winner || match.winner)),detailItem('เริ่มเมื่อ',stamp(match.createdAt)),detailItem('เสร็จเมื่อ',stamp(match.completedAt)),detailItem('Seed',match.input?.seed ?? match.seed,true),detailItem('กติกา',match.input?.rulesVersion || match.rulesVersion,true),detailItem('Input hash',match.inputHash,true),detailItem('Output hash',match.outputHash,true));
@@ -421,7 +431,7 @@ function renderMatchDetail() {
   if(match.error) $('match-detail').append(element('p','inline-error',typeof match.error==='string'?match.error:pretty(match.error)));
   $('match-detail').append(details);
 }
-function snapshotEvents() { return state.snapshot?.events || state.snapshot?.output?.events || state.snapshot?.battle?.events || []; }
+function snapshotEvents() { const events=state.snapshot?.events || state.snapshot?.output?.events || state.snapshot?.battle?.events;return Array.isArray(events)?events:[]; }
 function stopPlayback() { if(state.playback) clearInterval(state.playback); state.playback=null; text('play-events-button','เล่นเหตุการณ์'); }
 async function openSnapshot(id) {
   if(!id) return;
@@ -438,11 +448,14 @@ async function loadSnapshot(event) {
     state.snapshot=data?.snapshot || data; state.snapshotId=id; state.eventIndex=0;
     $('snapshot-empty').hidden=true; $('snapshot-content').hidden=false; $('replay-check-result').hidden=true;
     const snapshot=state.snapshot;
-    replace('snapshot-meta',detailItem('รหัสแมตช์',snapshot.matchId || snapshot.id || id,true),detailItem('Seed',snapshot.input?.seed ?? snapshot.seed,true),detailItem('กติกา',snapshot.input?.rulesVersion || snapshot.rulesVersion,true),detailItem('เวลาบันทึก',stamp(snapshot.createdAt || snapshot.capturedAt)),detailItem('เหตุการณ์',`${snapshotEvents().length} รายการ`),detailItem('ผล',winnerText(snapshot.result?.winner || snapshot.output?.result?.winner)));
+    renderSnapshotMeta(snapshot,id);
     text('snapshot-json',pretty(snapshot));
     const events=snapshotEvents();
     $('event-range').max=String(Math.max(0,events.length-1)); $('event-range').value='0';
     if(!events.length) replace('event-table',empty('ยังไม่มีเหตุการณ์','แมตช์อาจยังไม่เสร็จ ตรวจสถานะแล้วเปิด snapshot อีกครั้ง'));
+    else if(isRunnerRecord(snapshot)) {
+      replace('event-table',table(['ลำดับ','เวลา (ms)','ชนิดเหตุการณ์','ข้อมูลจากตัวรัน'],events.map((entry,index)=>[action(entry.seq??index+1,()=>selectEvent(index)),entry.timeMs??entry.atMs??'—',asText(entry.type??'เหตุการณ์'),runnerEventData(entry)])));
+    }
     else {
       const eventTable=table(['ลำดับ / รอบ','ผู้กระทำ','เป้าหมาย','เหตุการณ์ / สกิล','ค่า','HP หลังเหตุการณ์'],events.map((entry,index) => [action(`${entry.seq ?? index+1} / ${entry.round ?? '—'}`,()=>selectEvent(index)),actorName(entry.actor ?? entry.actorId),actorName(entry.target ?? entry.targetId),eventType(entry),eventAmount(entry),entry.hpAfter ?? entry.targetHp ?? entry.hp ?? '—']));
       replace('event-table',eventTable);
@@ -486,6 +499,7 @@ function selectEvent(index) {
   document.querySelectorAll('#event-table tbody tr').forEach((row,position)=>row.classList.toggle('active-event',position===state.eventIndex));
   if(!events.length) { replace('current-event',element('p','','ไม่มีเหตุการณ์ให้เล่น')); return; }
   const event=events[state.eventIndex];
+  if(isRunnerRecord(state.snapshot)){renderRunnerEvent(event,state.eventIndex);return;}
   replace('current-event',element('strong','',`#${event.seq ?? state.eventIndex+1} · ${eventType(event)}`),element('p','',`${actorName(event.actor ?? event.actorId)} → ${actorName(event.target ?? event.targetId)}`),element('p','',`รอบ ${event.round ?? '—'} · ${eventAmount(event)} · HP หลังเหตุการณ์ ${event.hpAfter ?? event.targetHp ?? event.hp ?? '—'}`));
   const details=element('details','raw-details'); details.append(element('summary','','ข้อมูลเหตุการณ์นี้'),element('pre','json-output',pretty(event))); $('current-event').append(details);
 }
@@ -503,8 +517,8 @@ async function replayCheck() {
     const result=await api(`/matches/${encodeURIComponent(state.snapshotId)}/replay-checks`,{method:'POST',timeout:60000});
     const check=result?.check || result;
     const verified=check.identical ?? check.matches ?? check.matched ?? check.passed ?? check.verified ?? (['passed','matched','verified','success'].includes(check.status)?true:['failed','mismatch'].includes(check.status)?false:null);
-    const node=$('replay-check-result'); node.hidden=false; node.classList.toggle('failed',verified===false);
-    node.replaceChildren(element('strong','',verified===true?'ผลตรงกัน — การจำลองซ้ำผ่านการตรวจสอบ':verified===false?'ผลไม่ตรงกัน — ตรวจรายละเอียดความแตกต่างด้านล่าง':'เซิร์ฟเวอร์รับคำขอตรวจผลซ้ำแล้ว'),element('pre','json-output',pretty(result)));
+    const node=$('replay-check-result'); node.hidden=false; node.classList.toggle('failed',verified===false);node.classList.toggle('unavailable',check.status==='unavailable');
+    node.replaceChildren(element('strong','',check.status==='unavailable'?'ยังตรวจคำนวณซ้ำไม่ได้ — ตัวรันหรือ artifact เวอร์ชันเดิมไม่พร้อม':verified===true?'ผลตรงกัน — การจำลองซ้ำผ่านการตรวจสอบ':verified===false?'ผลไม่ตรงกัน — ตรวจรายละเอียดความแตกต่างด้านล่าง':'เซิร์ฟเวอร์รับคำขอตรวจผลซ้ำแล้ว'),element('pre','json-output',pretty(result)));
   } catch(error) { notice(errorMessage(error),true); }
   finally { button.disabled=false; button.textContent='ตรวจผลการจำลองซ้ำ'; }
 }
@@ -753,6 +767,117 @@ function renderBackupCopies() {
   })));
 }
 
+
+function isRunnerRecord(record){return record?.kind==='runner'||record?.input?.kind==='runner'||(record?.snapshotSchemaVersion===2&&!!(record?.runner||record?.input?.runner));}
+function runnerMetadata(record){return record?.input?.runner||record?.runner||{};}
+function runnerIsTest(record){return record?.testOnly===true||record?.isTestOnly===true||record?.result?.isTestOnly===true||runnerMetadata(record).id==='manager-fixture';}
+function runnerCaption(record){const runner=runnerMetadata(record);return (runner.id||'ตัวรัน')+(runner.version?' · v'+runner.version:'');}
+function matchOutcome(record){if(isRunnerRecord(record)){const result=record.result;return runnerIsTest(record)?'TEST ONLY · ทดสอบตัวเชื่อมต่อ':result?.reason||'ผลจากตัวรัน';}return winnerText(record.result?.winner||record.winner);}
+function durationLabel(value){return typeof value==='number'&&Number.isFinite(value)?value+' ms':'—';}
+function rawDetails(caption,value,open=false){const details=element('details','raw-details');details.open=open;details.append(element('summary','',caption),element('pre','json-output',pretty(value)));return details;}
+function clearRunnerSession(){
+  state.runners=[];state.runnerReadiness=null;state.runnerRequestDirty=false;state.runnerBusy=false;state.runnerToggleBusy=false;state.pendingRunnerCommand=null;state.selectedRunnerMatchId=null;state.runnerMatch=null;
+  ['runner-readiness','runner-registry','runner-submitted','runner-result-meta'].forEach((id)=>replace(id));
+  $('runner-request-json').value='';text('runner-result-json','');text('runner-match-json','');clearError('runner-request-error');
+  $('runner-submitted').hidden=true;$('runner-result-panel').hidden=true;$('snapshot-kind-notice').hidden=true;
+}
+function renderRunners(){
+  const readiness=state.runnerReadiness;
+  if(!readiness)replace('runner-readiness',element('p','muted small-text','API ยังไม่ส่งสถานะความพร้อม'));
+  else{
+    const header=element('div','runner-readiness-status');header.append(pill(readiness.status||'awaiting-handoff'),element('p','',readiness.message||'รอข้อมูลจากทีมตัวรันเกม'));
+    const grid=element('div','policy-grid runner-readiness-grid');grid.append(detailItem('ตัวรันเกมจริง',readiness.realRunnerReady===true?'API รายงานว่ารับมอบตัวรันแล้ว':'ยังไม่พร้อม / รอรับมอบ'),detailItem('ตัวทดสอบ Manager',readiness.testRunnerEnabled===true?'เปิดไว้เพื่อทดสอบ':readiness.testRunnerEnabled===false?'ปิดใช้งาน':'API ไม่ระบุ'),detailItem('สัญญาข้อมูล','ฉบับร่าง รอทีมเกมรับรอง'));
+    const checklist=element('ul','runner-checklist');
+    const missing=Array.isArray(readiness.missing)?readiness.missing:[];
+    if(missing.length)missing.forEach((item)=>{const row=element('li');row.append(element('span','check-pending','รอ'),element('span','',typeof item==='string'?item.label||item:item.label||item.message||asText(item)));checklist.append(row);});
+    else checklist.append(element('li','muted small-text','API ไม่ได้ระบุรายการรอรับมอบเพิ่มเติม ดูรายละเอียดสถานะประกอบ'));
+    replace('runner-readiness',header,grid,element('h3','runner-checklist-title','รายการที่รอทีมเกม'),checklist,rawDetails('สถานะจาก API',readiness));
+  }
+  if(!state.runners.length)replace('runner-registry',empty('ยังไม่มีทะเบียนตัวรัน','โหลดข้อมูลใหม่เพื่อตรวจสถานะจากเซิร์ฟเวอร์'));
+  else replace('runner-registry',...state.runners.map((runner)=>{
+    const card=element('article','runner-card'),head=element('div','runner-card-header'),title=element('div');title.append(element('h3','',runner.name||runner.id),element('small','mono',runner.id));head.append(title,pill(runner.status|| (runner.enabled?'ready':'disabled')));card.append(head);
+    const testOnly=runner.testOnly===true||runner.isTestOnly===true||runner.kind==='test';
+    card.append(element('span','tiny-tag',testOnly?'TEST ONLY · ไม่มีการต่อสู้':'GAME RUNNER · รอรับมอบ'));
+    const data=element('div','runner-manifest-grid');data.append(detailItem('เวอร์ชัน',runner.version,true),detailItem('Protocol',runner.protocolVersion,true),detailItem('Revision',runner.revision),detailItem('Artifact hash',runner.artifactHash,true));card.append(data);
+    if(runner.reason)card.append(element('p','field-help',runner.reason));
+    if(testOnly&&runner.available===true){const toggle=action(runner.enabled?'ปิดตัวทดสอบ':'เปิดตัวทดสอบ',()=>toggleRunner(runner),runner.enabled?'secondary small':'primary small');toggle.disabled=state.runnerToggleBusy||!Number.isInteger(runner.revision);card.append(toggle);}
+    else card.append(element('p','muted small-text','ยังไม่มีตัวรันเกมให้เปิดใช้งาน'));
+    card.append(rawDetails('Manifest / ทะเบียนจาก API',runner.manifest||runner));return card;
+  }));
+  const fixture=state.runners.find((runner)=>runner.id==='manager-fixture');
+  text('runner-fixture-status',fixture?.enabled===true&&fixture.available===true?'ตัวทดสอบ Manager เปิดใช้งาน · ส่งงานทดสอบการรับส่งข้อมูลได้ ไม่มีการต่อสู้':fixture?'ตัวทดสอบ Manager ปิดใช้งาน · เปิดและยืนยันในทะเบียนก่อนส่งงาน':'ยังไม่ได้รับทะเบียน manager-fixture จาก API');
+  $('runner-submit-button').disabled=state.runnerBusy||fixture?.enabled!==true||fixture?.available!==true;
+}
+async function reloadRunners(){const data=await api('/runners');state.runners=list(data,'runners');state.runnerReadiness=data?.readiness??null;renderRunners();}
+async function toggleRunner(runner){
+  if(state.runnerToggleBusy)return;const enabled=!runner.enabled;
+  const prompt=enabled?'เปิดตัวทดสอบ Manager หรือไม่? ใช้ทดสอบการรับส่งข้อมูลเท่านั้น ไม่มีการต่อสู้ การเปลี่ยนแปลงนี้จะถูกบันทึกใน Audit':'ปิดตัวทดสอบ Manager หรือไม่? การเปลี่ยนแปลงนี้จะถูกบันทึกใน Audit';
+  if(!window.confirm(prompt))return;
+  state.runnerToggleBusy=true;renderRunners();
+  try{await api('/runners/'+encodeURIComponent(runner.id)+'/enabled',{method:'POST',body:{enabled,revision:runner.revision,confirmation:enabled?'ENABLE TEST RUNNER':'DISABLE RUNNER'}});notice(enabled?'เปิดตัวทดสอบ Manager แล้ว':'ปิดตัวทดสอบ Manager แล้ว');await reloadRunners();}
+  catch(error){notice(errorMessage(error),true);}finally{state.runnerToggleBusy=false;renderRunners();}
+}
+async function loadRunnerFixture(){
+  if(state.runnerRequestDirty&&!window.confirm('ต้องการแทนที่ JSON ที่แก้ไขไว้ด้วยคำขอ Fixture จาก API หรือไม่?'))return;
+  const button=$('runner-load-fixture-button');button.disabled=true;clearError('runner-request-error');
+  try{const data=await api('/runner-fixture');if(!data?.request||typeof data.request!=='object'||Array.isArray(data.request))throw new Error('API ไม่ส่ง request object ของ Fixture');$('runner-request-json').value=pretty(data.request);state.runnerRequestDirty=false;notice('โหลดคำขอตัวอย่างแล้ว ยังไม่ได้ส่งงานทดสอบ');}
+  catch(error){showError('runner-request-error',error);}finally{button.disabled=false;}
+}
+function runnerPayload(){
+  let payload;try{payload=JSON.parse($('runner-request-json').value);}catch{throw new Error('คำขอ Fixture ต้องเป็น JSON ที่ถูกต้อง');}
+  if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('คำขอต้องเป็น JSON object');
+  for(const side of ['teamA','teamB']){const characters=payload[side]?.characters;if(!Array.isArray(characters)||characters.length<1||characters.length>3)throw new Error(side+' ต้องมีตัวละคร 1–3 ตัว ตามสัญญาตัวรัน');}
+  return payload;
+}
+function runnerFingerprint(value,depth=0){
+  if(depth>100)throw new Error('ข้อมูล JSON ซ้อนลึกเกินไป');
+  if(value===null||typeof value!=='object'){if(typeof value==='number'&&!Number.isFinite(value))throw new Error('คำขอมีตัวเลขนอกช่วงที่ JSON รองรับ');return JSON.stringify(value);}
+  if(Array.isArray(value))return '['+value.map((item)=>runnerFingerprint(item,depth+1)).join(',')+']';
+  return '{'+Object.keys(value).sort().map((key)=>JSON.stringify(key)+':'+runnerFingerprint(value[key],depth+1)).join(',')+'}';
+}
+async function submitRunnerMatch(event){
+  event.preventDefault();if(state.runnerBusy)return;clearError('runner-request-error');state.runnerBusy=true;
+  const ids=['runner-request-json','runner-load-fixture-button','runner-new-command-button','runner-submit-button'];ids.forEach((id)=>{$(id).disabled=true;});
+  try{
+    const body=runnerPayload(),fingerprint=runnerFingerprint(body);
+    if(!state.pendingRunnerCommand||state.pendingRunnerCommand.fingerprint!==fingerprint)state.pendingRunnerCommand={key:uuid(),fingerprint,result:null};
+    const command=state.pendingRunnerCommand,result=await api('/runner-matches',{method:'POST',body,headers:{'Idempotency-Key':command.key}});command.result=result;
+    const matchId=result.matchId||result.id;state.selectedRunnerMatchId=matchId;state.runnerRequestDirty=false;
+    const message=element('div');message.append(element('span','tiny-tag','TEST ONLY'),element('strong','runner-submitted-title',result.reused?'เปิดงานทดสอบเดิม':'รับงานทดสอบเข้าคิวแล้ว'),element('p','mono',matchId),element('p','small-text','งานนี้ตรวจตัวเชื่อมต่อ Manager ไม่มีการต่อสู้ ส่งข้อมูลเดิมซ้ำจะใช้รหัสคำสั่งเดิม'));
+    replace('runner-submitted',message);$('runner-submitted').hidden=false;notice(result.reused?'ใช้คำสั่งทดสอบเดิม ไม่มีงานซ้ำ':'ส่งงานทดสอบตัวเชื่อมต่อแล้ว');
+    if(matchId)await loadRunnerMatch(matchId);
+  }catch(error){showError('runner-request-error',error);}finally{state.runnerBusy=false;ids.forEach((id)=>{$(id).disabled=false;});renderRunners();}
+}
+async function loadRunnerMatch(id){try{const data=await api('/matches/'+encodeURIComponent(id));if(state.selectedRunnerMatchId!==id)return;state.runnerMatch=data?.match||data;renderRunnerMatch();}catch(error){showError('runner-request-error',error);}}
+function renderRunnerMatch(){
+  const match=state.runnerMatch;if(!match)return;$('runner-result-panel').hidden=false;
+  replace('runner-result-meta',detailItem('รหัสงาน',match.id||state.selectedRunnerMatchId,true),detailItem('สถานะ',label(match.status)),detailItem('ตัวรัน',runnerCaption(match)),detailItem('ชนิด','TEST ONLY · ตัวทดสอบ Manager'),detailItem('durationMs จากผล',durationLabel(match.durationMs??match.result?.durationMs)),detailItem('เหตุผลจากตัวรัน',match.result?.reason??'ยังไม่มีผล'));
+  text('runner-result-json',match.result?pretty(match.result):'งานยังไม่มี result');text('runner-match-json',pretty(match));
+}
+function renderRunnerMatchDetail(match){
+  $('match-detail-panel').hidden=false;
+  const input=match.input||{},metadata=runnerMetadata(match),grid=element('div','match-detail-grid');
+  grid.append(detailItem('รหัสงาน',match.id||state.selectedMatchId,true),detailItem('สถานะ',label(match.status)),detailItem('ชนิดงาน',runnerIsTest(match)?'TEST ONLY · ไม่มีการต่อสู้':'Runner'),detailItem('ตัวรัน',runnerCaption(match)),detailItem('Protocol',metadata.protocolVersion,true),detailItem('Seed',input.seed??match.seed,true),detailItem('durationMs จากผล',durationLabel(match.durationMs??match.result?.durationMs)),detailItem('Rules / Content / Map',asText(input.versions)),detailItem('เริ่มเมื่อ',stamp(match.createdAt)),detailItem('เสร็จเมื่อ',stamp(match.completedAt)),detailItem('Input hash',match.inputHash,true),detailItem('Output hash',match.outputHash,true));
+  const nodes=[element('p','info-box page-info',runnerIsTest(match)?'TEST ONLY — ผลนี้มาจากตัวทดสอบการรับส่งข้อมูลของ Manager ไม่มีการจำลองต่อสู้ และไม่ยืนยันความพร้อมของตัวรันเกมจริง':'ข้อมูลของงานตัวรันแสดงตามสัญญา โดยไม่ตีความเป็นกติกาต้นแบบ'),grid,rawDetails('Result จากตัวรัน',match.result,true),rawDetails('ข้อมูล Snapshot / งานทั้งหมด',match)];
+  if(match.error)nodes.push(element('p','inline-error',asText(match.error)));replace('match-detail',...nodes);
+}
+function renderSnapshotMeta(snapshot,id){
+  const runner=isRunnerRecord(snapshot);$('snapshot-kind-notice').hidden=!runner;
+  if(runner){
+    const input=snapshot.input||snapshot,metadata=runnerMetadata(snapshot),result=snapshot.result||snapshot.output?.result;
+    text('snapshot-kind-notice',runnerIsTest(snapshot)?'TEST ONLY — Snapshot v2 ของตัวทดสอบ Manager ไม่มีการต่อสู้ เหตุการณ์และผลด้านล่างเป็นข้อมูลจากตัวเชื่อมต่อ':'Snapshot v2 ของตัวรัน แสดงเหตุการณ์และผลตามสัญญาของตัวรันโดยไม่ใช้สูตรแสดงผลของ prototype-v1');
+    replace('snapshot-meta',detailItem('รหัสงาน',snapshot.matchId||snapshot.id||id,true),detailItem('ชนิด / รูปแบบ','runner · snapshotSchemaVersion '+(input.snapshotSchemaVersion??snapshot.snapshotSchemaVersion??2)),detailItem('ตัวรัน',runnerCaption(snapshot)),detailItem('Protocol',metadata.protocolVersion,true),detailItem('Seed',input.seed,true),detailItem('durationMs จากผล',durationLabel(result?.durationMs??snapshot.durationMs)),detailItem('Rules / Content / Map',input.versions),detailItem('Artifact hash',metadata.artifactHash,true),detailItem('เหตุการณ์',snapshotEvents().length+' รายการ'));
+    return;
+  }
+  replace('snapshot-meta',detailItem('รหัสแมตช์',snapshot.matchId||snapshot.id||id,true),detailItem('Seed',snapshot.input?.seed??snapshot.seed,true),detailItem('กติกา',snapshot.input?.rulesVersion||snapshot.rulesVersion,true),detailItem('เวลาบันทึก',stamp(snapshot.createdAt||snapshot.capturedAt)),detailItem('เหตุการณ์',snapshotEvents().length+' รายการ'),detailItem('ผล',winnerText(snapshot.result?.winner||snapshot.output?.result?.winner)));
+}
+function runnerEventData(event){const node=element('div','runner-event-data');if(typeof event.message==='string')node.append(element('p','',event.message));node.append(rawDetails('JSON เหตุการณ์',event));return node;}
+function renderRunnerEvent(event,index){
+  const nodes=[element('span','tiny-tag',runnerIsTest(state.snapshot)?'TEST ONLY':'RUNNER EVENT'),element('strong','',String(event.seq??index+1)+' · '+asText(event.type??'เหตุการณ์ตัวรัน')),element('p','',typeof event.message==='string'?event.message:'ข้อมูลเหตุการณ์จากตัวรันตามต้นฉบับ')];
+  if(event.timeMs!==undefined||event.atMs!==undefined)nodes.push(element('p','mono','timeMs: '+asText(event.timeMs??event.atMs)));
+  nodes.push(rawDetails('JSON เหตุการณ์นี้',event,true));replace('current-event',...nodes);
+}
+
 $('api-url').value=publicStoredUrl() || API_BASE;
 $('login-form').addEventListener('submit',login);
 $('logout-button').addEventListener('click',logout);
@@ -792,8 +917,15 @@ $('revoke-sessions-form').addEventListener('submit',revokeSessions);
 $('audit-filter').addEventListener('input',renderAudit);
 $('audit-latest-button').addEventListener('click',()=>loadAuditPage());
 $('audit-next-button').addEventListener('click',()=>{if(state.auditNextCursor)loadAuditPage(state.auditNextCursor);});
+
+$('runner-load-fixture-button').addEventListener('click',loadRunnerFixture);
+$('runner-request-json').addEventListener('input',()=>{state.runnerRequestDirty=true;});
+$('runner-request-form').addEventListener('submit',submitRunnerMatch);
+$('runner-new-command-button').addEventListener('click',()=>{state.pendingRunnerCommand=null;$('runner-submitted').hidden=true;clearError('runner-request-error');notice('พร้อมส่งคำสั่งทดสอบใหม่ กดส่งงานเพื่อเริ่ม');});
+$('runner-result-history-button').addEventListener('click',()=>openMatch(state.selectedRunnerMatchId));
+$('runner-result-replay-button').addEventListener('click',()=>openSnapshot(state.selectedRunnerMatchId));
 window.addEventListener('hashchange',navigate);
-window.addEventListener('beforeunload',(event)=>{if(state.teamDirty && state.token){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',(event)=>{if((state.teamDirty || state.runnerRequestDirty) && state.token){event.preventDefault();event.returnValue='';}});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPlayback();else if(state.token)refresh(true);});
 setInterval(()=>{if(state.token && !document.hidden && !$('restore-dialog').open)refresh(true);},15000);
 navigate();
