@@ -5,6 +5,8 @@ const ROUTES = {
   overview: ['CONTROL CENTER', 'ภาพรวมเซิร์ฟเวอร์', 'สถานะระบบและการทดลองต่อสู้ในพื้นที่เดียว', 'ภาพรวม'],
   teams: ['TEAM WORKSHOP', 'ทีมจำลอง', 'จัดสเตตัส อุปกรณ์ และสกิลให้ทีม 3 ตัวละคร', 'ทีมจำลอง'],
   match: ['BATTLE SIMULATOR', 'เริ่มการต่อสู้', 'เลือกสองทีม พร้อม seed และกติกาที่ตรวจสอบย้อนหลังได้', 'เริ่มการต่อสู้'],
+  batches: ['EXPERIMENT LAB', 'ชุดทดลองและเปรียบเทียบ', 'ทดสอบหลาย seed วัดอัตราชนะ และเปรียบเทียบผลจาก snapshot ที่ล็อกไว้', 'ชุดทดลอง'],
+  security: ['ACCOUNT & SECURITY', 'บัญชีและความปลอดภัย', 'จัดการรหัสผ่าน เซสชัน และตรวจบันทึกการใช้งานแอดมิน', 'ความปลอดภัย'],
   history: ['BATTLE ARCHIVE', 'ประวัติแมตช์', 'ติดตามผลและเปิดดูรายละเอียดของแต่ละการทดลอง', 'ประวัติแมตช์'],
   replay: ['SNAPSHOT & REPLAY', 'Snapshot และรีเพลย์', 'สำรวจเหตุการณ์และตรวจว่าการจำลองซ้ำให้ผลตรงกัน', 'Snapshot และรีเพลย์'],
   jobs: ['WORKER OPERATIONS', 'คิวและข้อผิดพลาด', 'ติดตามงานประมวลผล และลองงานที่ล้มเหลวใหม่', 'คิวและข้อผิดพลาด'],
@@ -14,6 +16,7 @@ const STATE_LABELS = {
   queued: 'รอประมวลผล', pending: 'รอประมวลผล', running: 'กำลังทำงาน', processing: 'กำลังทำงาน',
   succeeded: 'สำเร็จ', completed: 'สำเร็จ', success: 'สำเร็จ', failed: 'ล้มเหลว', error: 'ผิดพลาด',
   online: 'ออนไลน์', ok: 'พร้อมใช้งาน', healthy: 'พร้อมใช้งาน', missing: 'ไม่พบสัญญาณ', offline: 'ออฟไลน์',
+  disabled: 'ปิดใช้งาน', configured: 'ตั้งค่าแล้ว', unconfigured: 'ยังไม่ตั้งค่า', degraded: 'ต้องตรวจสอบ', uploaded: 'อัปโหลดแล้ว', deleted: 'ลบตามนโยบายแล้ว', uploading: 'กำลังอัปโหลด', partial: 'สำเร็จบางส่วน',
   creating: 'กำลังสร้าง', passed: 'ผ่าน', verified: 'ผ่านการตรวจสอบ', mismatch: 'ผลไม่ตรงกัน', ready: 'พร้อมใช้งาน',
 };
 const state = {
@@ -21,6 +24,8 @@ const state = {
   teams: [], matches: [], jobs: [], backups: [], restoreTests: [], status: null,
   editTeamId: null, editRevision: null, teamDirty: false, pendingCommand: null,
   selectedMatchId: null, detail: null, snapshot: null, snapshotId: null, eventIndex: 0,
+  batches: [], selectedBatchId: null, batchDetail: null, pendingBatchCommand: null, batchBusy: false, rerunCommands: {}, comparison: null, compareIds: null, compareEpoch: 0,
+  auditEntries: [], auditCursor: null, auditNextCursor: null, auditPage: 1, auditBusy: false, auditEpoch: 0, backupPolicy: null, backupCopies: [],
   playback: null, refreshing: false, mutationBusy: false, restoreTarget: null, expiryTimer: null,
 };
 const requests = new Set();
@@ -112,7 +117,7 @@ function publicStoredUrl() { try { return localStorage.getItem('guild-arena-api-
 function savePublicUrl(url) { try { localStorage.setItem('guild-arena-api-url', url); } catch { /* การเก็บ URL เป็นเพียงความสะดวก จึงใช้แอปต่อได้เมื่อ browser ปิด storage */ } }
 
 async function api(path, options = {}) {
-  const { method = 'GET', body, auth = true, headers = {}, timeout = 25000 } = options;
+  const { method = 'GET', body, auth = true, headers = {}, timeout = 25000, responseType = 'json' } = options;
   if (auth && !state.token) throw new Error('กรุณาเข้าสู่ระบบก่อนใช้ข้อมูล');
   const session = state.session;
   const controller = new AbortController();
@@ -121,13 +126,14 @@ async function api(path, options = {}) {
   try {
     const response = await fetch(`${state.apiBase}/api/v1${path}`, {
       method, credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
-      headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(auth ? { Authorization: `Bearer ${state.token}` } : {}), ...headers },
+      headers: { Accept: responseType === 'blob' ? 'text/csv' : 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(auth ? { Authorization: `Bearer ${state.token}` } : {}), ...headers },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     let data = null;
     if (response.status !== 204) {
       const contentType = response.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) data = await response.json();
+      if (responseType === 'blob' && response.ok) data = await response.blob();
+      else if (contentType.includes('application/json')) data = await response.json();
       else throw new Error(`API ตอบกลับเป็นรูปแบบที่ไม่รองรับ (HTTP ${response.status}) ตรวจสอบปลายทางและ reverse proxy`);
     }
     if (auth && session !== state.session) throw new Error('เซสชันนี้สิ้นสุดแล้ว');
@@ -148,6 +154,7 @@ async function api(path, options = {}) {
 function endSession(message = '') {
   state.token = null; state.session += 1; state.username = ''; state.status = null;
   state.teams = []; state.matches = []; state.jobs = []; state.backups = []; state.restoreTests = [];
+  clearV11Session();
   state.snapshot = null; state.snapshotId = null; state.detail = null; state.selectedMatchId = null;
   state.pendingCommand = null; state.restoreTarget = null; state.refreshing = false;
   state.editTeamId = null; state.editRevision = null; state.teamDirty = false;
@@ -180,7 +187,7 @@ async function login(event) {
     $('login-screen').hidden = true; $('app-shell').hidden = false;
     const expiry = result.expiresAt ? new Date(result.expiresAt).getTime() - Date.now() : NaN;
     if (Number.isFinite(expiry)) state.expiryTimer = setTimeout(() => endSession('เซสชันหมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง'), Math.max(0, Math.min(expiry, 2147483647)));
-    newTeam(false); randomSeed();
+    newTeam(false); randomSeed(); randomBatchSeed();
     await navigate();
   } catch (error) { showError('login-error', error); }
   finally { $('password').value = ''; button.disabled = false; button.textContent = 'เข้าสู่ระบบ ↗'; }
@@ -216,9 +223,17 @@ async function refresh(quiet = false) {
   const tasks = [{ path: '/system/status', assign: (data) => { state.status = data; renderStatus(); } }];
   const route = state.route;
   if (route === 'overview' || route === 'history') tasks.push({ path: '/matches', assign: (data) => { state.matches = list(data, 'matches'); renderMatches(); } });
-  if (route === 'teams' || route === 'match') tasks.push({ path: '/teams', assign: (data) => { state.teams = list(data, 'teams'); renderTeams(); } });
+  if (route === 'teams' || route === 'match' || route === 'batches') tasks.push({ path: '/teams', assign: (data) => { state.teams = list(data, 'teams'); renderTeams(); } });
+  if (route === 'batches') {
+    tasks.push({ path: '/batches', assign: (data) => { state.batches = list(data, 'batches'); renderBatches(); } });
+    if (state.selectedBatchId) { const selectedId = state.selectedBatchId; tasks.push({ path: '/batches/' + encodeURIComponent(selectedId), assign: (data) => { if(state.selectedBatchId === selectedId) { state.batchDetail = data?.batch || data; renderBatchDetail(); } } }); }
+    if (state.compareIds) { const epoch=state.compareEpoch; state.compareIds.forEach((id,index) => tasks.push({ path:'/batches/'+encodeURIComponent(id), assign:(data)=>{ if(state.compareEpoch===epoch && state.comparison) { state.comparison[index]=data?.batch || data; renderComparison(); } } })); }
+  }
+  if (route === 'security' && !state.auditBusy) { const epoch=state.auditEpoch; tasks.push({path:auditPath(state.auditCursor),assign:(data)=>{if(state.auditEpoch===epoch){state.auditEntries=list(data,'entries');state.auditNextCursor=data?.nextCursor ?? null;renderAudit();}}}); }
   if (route === 'jobs') tasks.push({ path: '/jobs', assign: (data) => { state.jobs = list(data, 'jobs'); renderJobs(); } });
   if (route === 'backups') {
+    tasks.push({ path: '/backup-policy', assign: (data) => { state.backupPolicy=data; renderBackupPolicy(); } });
+    tasks.push({ path: '/backup-copies', assign: (data) => { state.backupCopies=list(data,'copies'); renderBackupCopies(); } });
     tasks.push({ path: '/backups', assign: (data) => { state.backups = list(data, 'backups'); renderBackups(); } });
     tasks.push({ path: '/restore-tests', assign: (data) => { state.restoreTests = list(data, 'restoreTests'); renderRestoreTests(); } });
   }
@@ -252,6 +267,7 @@ function renderStatus() {
   text('metric-queue', Number.isFinite(queued) && Number.isFinite(running) ? queued + running : '—');
   text('metric-matches', data.matches?.total ?? '—');
   text('raw-status', pretty(data));
+  renderStorageAndAlerts(data); renderQueueWarning();
   const okay = ['ok','online','healthy'].includes(apiStatus);
   $('connection-badge').classList.toggle('offline', !okay);
   $('connection-badge').lastElementChild.textContent = apiStatus ? `API ${label(apiStatus)}` : 'API ตอบกลับแล้ว';
@@ -319,13 +335,13 @@ function renderTeams() {
     const footer = element('div','team-card-footer'); footer.append(element('small','',stamp(team.updatedAt || team.createdAt)),action('แก้ไข',()=>editTeam(team)));
     card.append(header,chars,footer); return card;
   }));
-  ['team-a','team-b'].forEach((id) => {
+  ['team-a','team-b','batch-team-a','batch-team-b'].forEach((id) => {
     const select = $(id); const previous = select.value;
     const placeholder = element('option','','เลือกทีม'); placeholder.value=''; select.replaceChildren(placeholder);
     state.teams.forEach((team) => { const option = element('option','',team.name || team.data?.name || team.id); option.value=team.id; select.append(option); });
     if (state.teams.some((team)=>team.id===previous)) select.value=previous;
   });
-  updateTeamInfo();
+  updateTeamInfo(); updateBatchTeamInfo();
 }
 function validateTeam(team) {
   if (!team || team.schemaVersion !== 1) throw new Error('schemaVersion ต้องเป็น 1');
@@ -338,7 +354,7 @@ function validateTeam(team) {
     if (typeof character.name !== 'string' || !character.name.trim()) throw new Error('ตัวละครทุกตัวต้องมี name');
     if (![1,2,3].includes(character.position) || positions.has(character.position)) throw new Error('position ต้องเป็น 1, 2 และ 3 โดยไม่ซ้ำกัน');
     positions.add(character.position);
-    ['hp','attack','defense','speed'].forEach((key) => { if (!Number.isInteger(character.stats?.[key]) || character.stats[key] < (['hp','speed'].includes(key) ? 1 : 0)) throw new Error(`stats.${key} ของ ${character.name} ต้องเป็นจำนวนเต็ม${['hp','speed'].includes(key)?'มากกว่า 0':'ตั้งแต่ 0'}`); });
+    ['hp','attack','defense','speed'].forEach((key) => { if (!Number.isInteger(character.stats?.[key]) || character.stats[key] < (key==='hp' ? 1 : 0)) throw new Error(`stats.${key} ของ ${character.name} ต้องเป็นจำนวนเต็ม${key==='hp'?'มากกว่า 0':'ตั้งแต่ 0'}`); });
     ['weaponAttack','armorDefense','bonusHp'].forEach((key) => { if (!Number.isInteger(character.equipment?.[key]) || character.equipment[key] < 0) throw new Error(`equipment.${key} ของ ${character.name} ต้องเป็นจำนวนเต็มตั้งแต่ 0`); });
     if (!Array.isArray(character.skills) || character.skills.length === 0 || character.skills.some((skill)=>!['strike','power-strike','heal'].includes(skill?.id))) throw new Error(`skills ของ ${character.name} ต้องใช้ strike, power-strike หรือ heal`);
   });
@@ -515,7 +531,7 @@ function renderJobs() {
     return [ids,pill(job.status),`ประมวลผล ${job.attempts ?? '—'} / ลองใหม่ ${job.retries ?? '—'}`,error,stamp(job.updatedAt || job.createdAt),buttons];
   })));
 }
-function byteSize(value) { const bytes=Number(value); if(!Number.isFinite(bytes))return '—'; return bytes<1024?`${bytes} B`:bytes<1048576?`${(bytes/1024).toFixed(1)} KB`:`${(bytes/1048576).toFixed(1)} MB`; }
+function byteSize(value) { if(value===null || value===undefined)return '—'; const bytes=Number(value); if(!Number.isFinite(bytes))return '—'; return bytes<1024?`${bytes} B`:bytes<1048576?`${(bytes/1024).toFixed(1)} KB`:bytes<1073741824?`${(bytes/1048576).toFixed(1)} MB`:`${(bytes/1073741824).toFixed(2)} GB`; }
 function renderBackups() {
   if(!state.backups.length) {replace('backups-list',empty('ยังไม่มีข้อมูลสำรอง','สร้าง Backup แรก แล้วทดสอบกู้คืนเพื่อยืนยันว่าข้อมูลใช้ได้'));return;}
   replace('backups-list',table(['รหัส Backup','สร้างเมื่อ','สถานะ','ขนาด',''],state.backups.map((backup)=>{
@@ -547,6 +563,196 @@ async function submitRestore(event) {
   catch(error){notice(errorMessage(error),true);}finally{button.disabled=false;}
 }
 
+
+function clearV11Session() {
+  state.batches=[]; state.batchDetail=null; state.selectedBatchId=null; state.pendingBatchCommand=null; state.rerunCommands={}; state.batchBusy=false;
+  state.comparison=null; state.compareIds=null; state.compareEpoch+=1;
+  state.auditEntries=[]; state.auditCursor=null; state.auditNextCursor=null; state.auditPage=1; state.auditBusy=false; state.auditEpoch+=1;
+  state.backupPolicy=null; state.backupCopies=[];
+  ['current-password','new-password','confirm-new-password','revoke-password','batch-name','batch-start-seed','audit-filter'].forEach((id)=>{$(id).value='';});
+  ['batch-team-a','batch-team-b','compare-batch-a','compare-batch-b','batch-list','batch-detail-meta','batch-summary','batch-matches','batch-comparison','batch-submitted','audit-list','backup-policy','backup-copies','storage-summary','system-alerts'].forEach((id)=>replace(id));
+  ['password-error','revoke-error','batch-error'].forEach(clearError);
+  $('batch-detail-panel').hidden=true; $('batch-submitted').hidden=true; $('audit-next-button').disabled=true;
+}
+function renderStorageAndAlerts(data) {
+  const storage=data.storage;
+  if(!storage)replace('storage-summary',element('p','muted small-text','API ยังไม่ส่งข้อมูลพื้นที่จัดเก็บ'));
+  else replace('storage-summary',...[
+    ['พื้นที่ว่าง',storage.freeBytes],['ความจุดิสก์',storage.totalBytes],['ฐานข้อมูล',storage.databaseBytes],['ไฟล์ WAL',storage.walBytes],['Backup ในเครื่อง',storage.backupBytes],['ฐานทดสอบกู้คืน',storage.restoreTestBytes],
+  ].map(([caption,bytes])=>detailItem(caption,byteSize(bytes))));
+  if(!Array.isArray(data.alerts)) {replace('system-alerts',element('p','muted small-text','API ยังไม่ส่งข้อมูลการแจ้งเตือน'));return;}
+  if(!data.alerts.length) {replace('system-alerts',element('p','system-clear','API รายงานว่าไม่มีการแจ้งเตือนขณะนี้'));return;}
+  replace('system-alerts',...data.alerts.map((alert)=>{const node=element('div',alert.severity==='critical'?'system-alert critical':'system-alert');node.append(element('strong','',alert.severity==='critical'?'ต้องตรวจสอบทันที':'ควรตรวจสอบ'),element('p','',alert.message || alert.code),element('small','mono',alert.code));return node;}));
+}
+function renderQueueWarning() {
+  const queued=state.status?.queue?.queued,running=state.status?.queue?.running;
+  let message='API ยังไม่ส่งจำนวนงานในคิว';
+  if(Number.isFinite(queued)&&Number.isFinite(running))message='คิวปัจจุบัน: รอ '+queued+' งาน · กำลังทำงาน '+running+' งาน'+(queued>0?' — ชุดใหม่จะเข้าคิวต่อจากงานที่มีอยู่':'');
+  if(state.status?.worker?.status==='missing')message+=' · ไม่พบสัญญาณ Worker โปรดตรวจสอบก่อนส่งชุดใหญ่';
+  if(state.status?.queue?.oldestQueuedAt)message+=' · งานเก่าสุดรอตั้งแต่ '+stamp(state.status.queue.oldestQueuedAt);
+  text('batch-queue-warning',message);
+}
+function updateBatchTeamInfo() {
+  ['a','b'].forEach((side)=>{const team=state.teams.find((item)=>item.id===$('batch-team-'+side).value);text('batch-team-'+side+'-info',team?'Revision '+(team.revision??'—')+' · '+(team.characters || team.data?.characters || []).length+' ตัวละคร':'เลือกทีมที่บันทึกไว้');});
+}
+function randomBatchSeed() {
+  const values=new Uint32Array(1);crypto.getRandomValues(values);
+  const count=Math.max(1,Math.min(100,Number($('batch-count').value)||10));
+  $('batch-start-seed').value=String(values[0]%(4294967296-count+1));
+}
+function batchPayload() {
+  const name=$('batch-name').value.trim(),teamA=state.teams.find((item)=>item.id===$('batch-team-a').value),teamB=state.teams.find((item)=>item.id===$('batch-team-b').value);
+  if(!name || name.length>80)throw new Error('ระบุชื่อชุดทดลองไม่เกิน 80 ตัวอักษร');
+  if(!teamA || !teamB)throw new Error('เลือกทีมทั้งสองฝ่าย');
+  if(!Number.isInteger(teamA.revision)||!Number.isInteger(teamB.revision))throw new Error('API ไม่ส่ง revision ของทีม กรุณาโหลดข้อมูลใหม่');
+  const count=Number($('batch-count').value),seed=$('batch-start-seed').value.trim();
+  if(!Number.isInteger(count)||count<1||count>100)throw new Error('จำนวนแมตช์ต้องเป็นจำนวนเต็ม 1–100');
+  if(!/^\d+$/.test(seed)||Number(seed)>4294967295)throw new Error('Seed เริ่มต้นต้องเป็นจำนวนเต็ม 0–4294967295');
+  if(Number(seed)+count-1>4294967295)throw new Error('Seed สุดท้ายเกิน 4294967295 ลด seed เริ่มต้นหรือจำนวนแมตช์');
+  return{name,teamAId:teamA.id,teamBId:teamB.id,teamARevision:teamA.revision,teamBRevision:teamB.revision,rulesVersion:'prototype-v1',startSeed:String(Number(seed)),count};
+}
+async function submitBatch(event) {
+  event.preventDefault();if(state.batchBusy)return;clearError('batch-error');
+  state.batchBusy=true;const ids=['batch-name','batch-team-a','batch-team-b','batch-start-seed','batch-count','batch-random-seed-button','batch-new-command-button','start-batch-button'];ids.forEach((id)=>{$(id).disabled=true;});
+  try{
+    const body=batchPayload(),fingerprint=JSON.stringify(body);
+    if(!state.pendingBatchCommand||state.pendingBatchCommand.fingerprint!==fingerprint)state.pendingBatchCommand={key:uuid(),fingerprint,result:null};
+    const command=state.pendingBatchCommand;
+    const result=await api('/batches',{method:'POST',body,headers:{'Idempotency-Key':command.key}});
+    command.result=result;const id=result.id || result.batchId;
+    const message=element('div');message.append(element('strong','',result.reused?'เปิดคำสั่งชุดทดลองเดิม':'รับชุดทดลองเข้าระบบแล้ว'),element('p','mono',id),element('p','small-text','ส่งข้อมูลเดิมซ้ำจะใช้คำสั่งเดิม กด “เริ่มคำสั่งชุดใหม่” เมื่อต้องการสร้างการทดลองใหม่'));
+    if(id)message.append(action('เปิดรายละเอียด',()=>openBatch(id)));
+    replace('batch-submitted',message);$('batch-submitted').hidden=false;
+    notice(result.reused?'ใช้ชุดทดลองเดิม ไม่มีการสร้างซ้ำ':'ส่งชุดทดลองแล้ว ติดตามผลในรายละเอียดด้านล่าง');
+    if(id)await openBatch(id);await refresh();
+  }catch(error){showError('batch-error',error);}finally{state.batchBusy=false;ids.forEach((id)=>{$(id).disabled=false;});}
+}
+function batchTeam(batch,side) {
+  const input=batch.input || {},team=input['team'+side] || input.teams?.[side] || {};
+  return{name:team.name || team.data?.name || input['team'+side+'Name'] || batch['team'+side+'Name'] || 'ไม่ระบุชื่อทีม',revision:team.revision ?? input['team'+side+'Revision'] ?? batch['team'+side+'Revision'],id:team.id || input['team'+side+'Id'] || batch['team'+side+'Id']};
+}
+function batchTeamCaption(batch,side) {const team=batchTeam(batch,side);return team.name+' · revision '+(team.revision??'—');}
+function batchProvisional(batch) {
+  const summary=batch.summary || {};
+  return !Number.isFinite(summary.total)||!Number.isFinite(summary.succeeded)||summary.succeeded<summary.total||Number(summary.failed)>0;
+}
+function percent(value) {return typeof value==='number'&&Number.isFinite(value)?value.toFixed(1)+'%':'—';}
+function average(value) {return typeof value==='number'&&Number.isFinite(value)?value.toFixed(2):'—';}
+function renderBatches() {
+  if(!state.batches.length)replace('batch-list',empty('ยังไม่มีชุดทดลอง','เลือกสองทีมและจำนวนแมตช์เพื่อเริ่มเก็บผลจากหลาย seed'));
+  else replace('batch-list',table(['ชื่อชุด / รหัส','สถานะ','ความคืบหน้า','สร้างเมื่อ',''],state.batches.map((batch)=>{
+    const title=element('div','',batch.name || batch.id);title.append(element('span','subtext mono',batch.id));
+    const summary=batch.summary;const progress=summary?String(summary.succeeded??'—')+' / '+String(summary.total??'—')+' สำเร็จ':'เปิดรายละเอียดเพื่อดูผล';
+    return[title,pill(batch.status),progress,stamp(batch.createdAt),action('รายละเอียด',()=>openBatch(batch.id))];
+  })));
+  ['compare-batch-a','compare-batch-b'].forEach((id)=>{const select=$(id),previous=select.value,placeholder=element('option','','เลือกชุดทดลอง');placeholder.value='';select.replaceChildren(placeholder);state.batches.forEach((batch)=>{const option=element('option','',(batch.name || batch.id)+' · '+stamp(batch.createdAt));option.value=batch.id;select.append(option);});if(state.batches.some((batch)=>batch.id===previous))select.value=previous;});
+}
+async function openBatch(id) {
+  if(!id)return;state.selectedBatchId=id;
+  if(state.route!=='batches')location.hash='batches';
+  try{const response=await api('/batches/'+encodeURIComponent(id));if(state.selectedBatchId!==id)return;state.batchDetail=response?.batch || response;renderBatchDetail();}
+  catch(error){showError('page-error',error);}
+}
+function renderBatchDetail() {
+  const batch=state.batchDetail;if(!batch)return;
+  $('batch-detail-panel').hidden=false;text('batch-detail-title',batch.name || 'รายละเอียดชุดทดลอง');
+  const input=batch.input || {},summary=batch.summary || {};
+  replace('batch-detail-meta',detailItem('รหัสชุดทดลอง',batch.id,true),detailItem('ฝ่าย A',batchTeamCaption(batch,'A')),detailItem('ฝ่าย B',batchTeamCaption(batch,'B')),detailItem('Seed เริ่มต้น',input.startSeed,true),detailItem('จำนวนแมตช์',input.count ?? summary.total),detailItem('กติกา',input.rulesVersion,true));
+  const provisional=batchProvisional(batch);$('batch-provisional').hidden=!provisional;
+  text('batch-provisional','ผลเบื้องต้น: สำเร็จ '+(summary.succeeded??'—')+' จาก '+(summary.total??'—')+' แมตช์ · ล้มเหลว '+(summary.failed??'—')+' แมตช์ สถิติยังไม่ครอบคลุมชุดทดลองทั้งหมด');
+  const cards=[['ชนะฝ่าย A',summary.winsA,percent(summary.winRateA)],['ชนะฝ่าย B',summary.winsB,percent(summary.winRateB)],['เสมอ',summary.draws,'จากแมตช์ที่สำเร็จ'],['รอบเฉลี่ย',average(summary.averageRounds),'จากแมตช์ที่สำเร็จ'],['รอ / ทำงาน',(summary.queued??'—')+' / '+(summary.running??'—'),'สถานะคิว'],['สำเร็จ / ทั้งหมด',(summary.succeeded??'—')+' / '+(summary.total??'—'),'ล้มเหลว '+(summary.failed??'—')]];
+  replace('batch-summary',...cards.map(([caption,value,sub])=>{const card=element('div','batch-stat');card.append(element('span','',caption),element('strong','',asText(value)),element('small','',sub));return card;}));
+  const matches=list(batch,'matches');
+  if(!matches.length)replace('batch-matches',empty('ยังไม่มีรายการแมตช์','โหลดข้อมูลใหม่หลังเซิร์ฟเวอร์เตรียมคิว'));
+  else replace('batch-matches',table(['แมตช์','Seed','สถานะ','ผล','รอบ',''],matches.map((match)=>[element('span','mono',match.matchId || match.id),element('span','mono',match.seed),pill(match.status),winnerText(match.winner),match.rounds??'—',action('ดูผล',()=>openMatch(match.matchId || match.id))])));
+}
+async function rerunBatch() {
+  const id=state.selectedBatchId;if(!id||state.batchBusy)return;
+  state.batchBusy=true;$('batch-rerun-button').disabled=true;
+  try{
+    if(!state.rerunCommands[id])state.rerunCommands[id]={key:uuid(),result:null};
+    const command=state.rerunCommands[id];
+    const result=await api('/batches/'+encodeURIComponent(id)+'/reruns',{method:'POST',headers:{'Idempotency-Key':command.key}});
+    command.result=result;const newId=result.id || result.batchId;
+    notice(result.reused?'เปิดชุดที่ทดลองซ้ำไว้แล้ว':'สร้างชุดทดลองซ้ำด้วย snapshot เดิมแล้ว');
+    if(newId)await openBatch(newId);await refresh();
+  }catch(error){notice(errorMessage(error),true);}finally{state.batchBusy=false;$('batch-rerun-button').disabled=false;}
+}
+async function exportBatchCsv() {
+  const id=state.selectedBatchId;if(!id)return;
+  const button=$('batch-csv-button');button.disabled=true;
+  try{const blob=await api('/batches/'+encodeURIComponent(id)+'/export.csv',{responseType:'blob'}),url=URL.createObjectURL(blob),a=element('a');a.href=url;a.download='guild-arena-batch-'+String(id).replace(/[^a-zA-Z0-9_-]/g,'_')+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);notice('ดาวน์โหลด CSV ผ่านการตรวจสิทธิ์แล้ว');}
+  catch(error){notice(errorMessage(error),true);}finally{button.disabled=false;}
+}
+async function compareBatches(event) {
+  event.preventDefault();const ids=[$('compare-batch-a').value,$('compare-batch-b').value];
+  if(!ids[0]||!ids[1])return;
+  if(ids[0]===ids[1]){notice('เลือกคนละชุดทดลองเพื่อเปรียบเทียบ',true);return;}
+  const button=$('compare-batches-button');button.disabled=true;const epoch=++state.compareEpoch;
+  try{const results=await Promise.all(ids.map((id)=>api('/batches/'+encodeURIComponent(id))));if(epoch!==state.compareEpoch)return;state.compareIds=ids;state.comparison=results.map((item)=>item?.batch||item);renderComparison();}
+  catch(error){notice(errorMessage(error),true);}finally{button.disabled=false;}
+}
+function renderComparison() {
+  if(!state.comparison || state.comparison.length!==2)return;
+  const [a,b]=state.comparison;const summaries=[a.summary||{},b.summary||{}];
+  const rows=[['สถานะ',pill(a.status),pill(b.status)],['ฝ่าย A',batchTeamCaption(a,'A'),batchTeamCaption(b,'A')],['ฝ่าย B',batchTeamCaption(a,'B'),batchTeamCaption(b,'B')],['กติกา',a.input?.rulesVersion,b.input?.rulesVersion],['Seed เริ่มต้น',a.input?.startSeed,b.input?.startSeed],['จำนวนแมตช์',a.input?.count??summaries[0].total,b.input?.count??summaries[1].total],['สำเร็จ',...summaries.map((s)=>s.succeeded??'—')],['รอ / ทำงาน',...summaries.map((s)=>(s.queued??'—')+' / '+(s.running??'—'))],['ล้มเหลว',...summaries.map((s)=>s.failed??'—')],['ฝ่าย A ชนะ',...summaries.map((s)=>(s.winsA??'—')+' · '+percent(s.winRateA))],['ฝ่าย B ชนะ',...summaries.map((s)=>(s.winsB??'—')+' · '+percent(s.winRateB))],['เสมอ',...summaries.map((s)=>s.draws??'—')],['รอบเฉลี่ย',...summaries.map((s)=>average(s.averageRounds))]];
+  const nodes=[];if(batchProvisional(a)||batchProvisional(b))nodes.push(element('p','info-box compare-warning','ผลเบื้องต้น: อย่างน้อยหนึ่งชุดยังสำเร็จไม่ครบหรือมีแมตช์ล้มเหลว อัตราชนะคำนวณจากตัวอย่างที่สำเร็จเท่านั้น'));
+  nodes.push(table(['รายการ',a.name || a.id,b.name || b.id],rows));
+  nodes.push(element('p','field-help','อ่าน revision, seed, จำนวนตัวอย่าง และกติกาประกอบก่อนสรุปผล การเทียบนี้เป็นผลของกติกาต้นแบบ'));
+  replace('batch-comparison',...nodes);
+}
+function clearPasswordFields(){['current-password','new-password','confirm-new-password','revoke-password'].forEach((id)=>{$(id).value='';});}
+async function changePassword(event) {
+  event.preventDefault();clearError('password-error');const button=$('change-password-button');button.disabled=true;
+  try{
+    const currentPassword=$('current-password').value,newPassword=$('new-password').value;
+    if(newPassword!==$('confirm-new-password').value)throw new Error('รหัสผ่านใหม่และช่องยืนยันไม่ตรงกัน');
+    if(newPassword.length<12||newPassword.length>1024)throw new Error('รหัสผ่านใหม่ต้องมี 12–1024 ตัวอักษร');
+    if(newPassword===currentPassword)throw new Error('รหัสผ่านใหม่ต้องต่างจากรหัสเดิม');
+    await api('/auth/password',{method:'POST',body:{currentPassword,newPassword}});
+    clearPasswordFields();endSession();notice('เปลี่ยนรหัสผ่านและยกเลิกทุกเซสชันแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่');
+  }catch(error){showError('password-error',error);}finally{clearPasswordFields();button.disabled=false;}
+}
+async function revokeSessions(event) {
+  event.preventDefault();clearError('revoke-error');const button=$('revoke-sessions-button');button.disabled=true;
+  try{await api('/auth/revoke-sessions',{method:'POST',body:{currentPassword:$('revoke-password').value}});clearPasswordFields();endSession();notice('ยกเลิกทุกเซสชันแล้ว กรุณาเข้าสู่ระบบอีกครั้ง');}
+  catch(error){showError('revoke-error',error);}finally{clearPasswordFields();button.disabled=false;}
+}
+function auditPath(cursor){return '/audit?limit=50'+(cursor?'&before='+encodeURIComponent(cursor):'');}
+function renderAudit() {
+  const filter=$('audit-filter').value.trim().toLowerCase();
+  const entries=state.auditEntries.filter((entry)=>!filter||[entry.actorName,asText(entry.actor),entry.action,asText(entry.target),asText(entry.metadata)].join(' ').toLowerCase().includes(filter));
+  text('audit-page-label','หน้าที่ '+state.auditPage+' · แสดง '+entries.length+' จาก '+state.auditEntries.length+' รายการในหน้านี้ · เรียงใหม่ไปเก่า');
+  $('audit-next-button').disabled=!state.auditNextCursor||state.auditBusy;
+  if(!entries.length){replace('audit-list',empty('ไม่พบบันทึก',filter?'ไม่มีรายการตรงกับคำค้นในหน้านี้':'API ยังไม่มีบันทึกในหน้าที่เลือก'));return;}
+  replace('audit-list',table(['เวลา','ผู้กระทำ','คำสั่ง','เป้าหมาย','รายละเอียด'],entries.map((entry)=>{
+    const details=element('details');details.append(element('summary','text-link','ดูข้อมูล'),element('pre','json-output',pretty(entry.metadata??{})));
+    return[stamp(entry.createdAt),asText(entry.actorName || entry.actor),element('span','mono',entry.action),element('span','mono audit-target',asText(entry.target)),details];
+  })));
+}
+async function loadAuditPage(cursor=null) {
+  if(state.auditBusy)return;state.auditBusy=true;const epoch=++state.auditEpoch;$('audit-next-button').disabled=true;$('audit-latest-button').disabled=true;
+  try{const data=await api(auditPath(cursor));if(epoch!==state.auditEpoch)return;state.auditEntries=list(data,'entries');state.auditCursor=cursor;state.auditNextCursor=data?.nextCursor??null;state.auditPage=cursor?state.auditPage+1:1;renderAudit();}
+  catch(error){notice(errorMessage(error),true);}finally{state.auditBusy=false;$('audit-latest-button').disabled=false;$('audit-next-button').disabled=!state.auditNextCursor;}
+}
+function renderBackupPolicy() {
+  const data=state.backupPolicy;if(!data)return;
+  const schedule=data.schedule||{},retention=data.retention||{},offsite=data.offsite||{},grid=element('div','policy-grid');
+  grid.append(detailItem('ตารางอัตโนมัติ',schedule.enabled===true?'เปิดใช้งาน':schedule.enabled===false?'ปิดใช้งาน':'API ไม่ระบุ'),detailItem('เวลาสำรอง',schedule.time?(schedule.time+' · '+(schedule.timeZone || 'API ไม่ระบุเขตเวลา')):'API ไม่ระบุ'),detailItem('เก็บสำเนาในเครื่อง',Number.isFinite(retention.local)?retention.local+' ชุด':'API ไม่ระบุ'),detailItem('เก็บสำเนา Google Drive',Number.isFinite(retention.remote)?retention.remote+' ชุด':'API ไม่ระบุ'),detailItem('ลบตามนโยบาย',retention.autoDelete===true?'เปิด เฉพาะ Backup ที่ระบบนี้บันทึกไว้':retention.autoDelete===false?'ปิด':'API ไม่ระบุ'),detailItem('ผู้ให้บริการสำเนา',offsite.provider || 'API ไม่ระบุ'),detailItem('การตั้งค่าสำเนานอก VPS',offsite.configured===true?'ตั้งค่าแล้ว':offsite.configured===false?'ยังไม่ตั้งค่า':'API ไม่ระบุ'),detailItem('ตรวจสำเนาล่าสุด',stamp(offsite.lastVerifiedAt)),detailItem('สถานะจาก API',typeof data.status==='string'?label(data.status):asText(data.status)));
+  const nodes=[grid,element('p','info-box compare-warning','Backup ตามเวลาใน VPS ทำงานได้อิสระ ส่วนการส่งสำเนาไป Google Drive ใช้ Codex app ซึ่งต้องเปิดอยู่และเชื่อมต่อ Google Drive ได้ หากแอปปิดหรือการเชื่อมต่อขัดข้อง ให้ตรวจสำเนาค้างส่งและเวลาที่ตรวจสำเนาล่าสุด')];
+  if(offsite.configured===false)nodes.push(element('p','info-box compare-warning','ยังไม่พร้อมสำรองไป Google Drive ต้องตั้งค่าการเชื่อมต่อบนเซิร์ฟเวอร์ก่อน สถานะเปิดตารางเพียงอย่างเดียวไม่ได้ยืนยันว่าสำเนานอก VPS สำเร็จ'));
+  if(offsite.lastError)nodes.push(element('p','inline-error',asText(offsite.lastError)));
+  const details=element('details','raw-details');details.append(element('summary','','ข้อมูลนโยบายจาก API'),element('pre','json-output',pretty(data)));nodes.push(details);replace('backup-policy',...nodes);
+}
+function renderBackupCopies() {
+  if(!state.backupCopies.length){replace('backup-copies',empty('ยังไม่มีบันทึกสำเนานอก VPS','ตรวจการตั้งค่า Google Drive และสถานะสำรองจากเซิร์ฟเวอร์'));return;}
+  replace('backup-copies',table(['Backup','ผู้ให้บริการ / รหัสไฟล์','สถานะ','ตรวจสอบเมื่อ','รายละเอียด'],state.backupCopies.map((copy)=>{
+    const provider=element('div','',copy.provider || '—');provider.append(element('span','subtext mono audit-target',copy.providerFileId || copy.fileId || '—'));
+    const details=element('details');details.append(element('summary','text-link','ดู hash และผล'),element('pre','json-output',pretty(copy)));
+    return[element('span','mono',copy.backupId),provider,pill(copy.status),stamp(copy.verifiedAt),details];
+  })));
+}
+
 $('api-url').value=publicStoredUrl() || API_BASE;
 $('login-form').addEventListener('submit',login);
 $('logout-button').addEventListener('click',logout);
@@ -573,6 +779,19 @@ $('download-snapshot-button').addEventListener('click',downloadSnapshot);
 $('create-backup-button').addEventListener('click',createBackup);
 $('cancel-restore-button').addEventListener('click',()=>{$('restore-dialog').close();state.restoreTarget=null;});
 $('restore-form').addEventListener('submit',submitRestore);
+
+$('batch-form').addEventListener('submit',submitBatch);
+$('batch-team-a').addEventListener('change',updateBatchTeamInfo);$('batch-team-b').addEventListener('change',updateBatchTeamInfo);
+$('batch-random-seed-button').addEventListener('click',randomBatchSeed);
+$('batch-new-command-button').addEventListener('click',()=>{state.pendingBatchCommand=null;$('batch-submitted').hidden=true;clearError('batch-error');notice('พร้อมสร้างชุดทดลองใหม่ กดเริ่มชุดทดลองเพื่อส่งคำสั่ง');});
+$('batch-rerun-button').addEventListener('click',rerunBatch);
+$('batch-csv-button').addEventListener('click',exportBatchCsv);
+$('batch-compare-form').addEventListener('submit',compareBatches);
+$('password-form').addEventListener('submit',changePassword);
+$('revoke-sessions-form').addEventListener('submit',revokeSessions);
+$('audit-filter').addEventListener('input',renderAudit);
+$('audit-latest-button').addEventListener('click',()=>loadAuditPage());
+$('audit-next-button').addEventListener('click',()=>{if(state.auditNextCursor)loadAuditPage(state.auditNextCursor);});
 window.addEventListener('hashchange',navigate);
 window.addEventListener('beforeunload',(event)=>{if(state.teamDirty && state.token){event.preventDefault();event.returnValue='';}});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPlayback();else if(state.token)refresh(true);});

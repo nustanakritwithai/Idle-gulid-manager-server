@@ -1,6 +1,6 @@
 # Guild Arena — Server Manager Dashboard
 
-Dashboard ภาษาไทยสำหรับ Guild Arena v1 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ส่วนข้อมูลและคำสั่งจัดการทุกอย่างเรียก Backend บน VPS ซึ่งต้องยืนยันสิทธิ์แอดมิน
+Dashboard ภาษาไทยสำหรับ Guild Arena v1.1 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ส่วนข้อมูลและคำสั่งจัดการทุกอย่างเรียก Backend บน VPS ซึ่งต้องยืนยันสิทธิ์แอดมิน
 
 ## เปิดใช้งาน
 
@@ -15,15 +15,17 @@ Dashboard ภาษาไทยสำหรับ Guild Arena v1 ใช้ HTML,
 
 ## หน้าที่มี
 
-- ภาพรวม: สถานะ API, worker, คิว, จำนวนแมตช์ และแมตช์ล่าสุดจาก API จริง
+- ภาพรวม: สถานะ API, worker, คิว, จำนวนแมตช์ แมตช์ล่าสุด พื้นที่ดิสก์/ฐานข้อมูล/WAL/Backup/ฐานทดสอบ และการแจ้งเตือนจาก API จริง
 - ทีมจำลอง: สร้างและแก้ไข JSON ทีม 3 ตัวละคร พร้อม revision และการตรวจข้อมูลเบื้องต้น ตัวอย่างเติมแบบฟอร์มเท่านั้น ต้องกดบันทึกก่อนสร้างข้อมูลจริง
 - เริ่มการต่อสู้: เลือกสองทีม ล็อก revision, seed uint32 และ rulesVersion `prototype-v1`
 - ประวัติแมตช์: กรองสถานะและอ่านผล รายละเอียดทีม seed และ hash
 - Snapshot และรีเพลย์: แสดงลำดับเหตุการณ์ พร้อมก่อนหน้า/ถัดไป/เล่น/เลื่อนตำแหน่ง ดาวน์โหลด JSON และให้เซิร์ฟเวอร์ตรวจการจำลองซ้ำ
+- ชุดทดลองและเปรียบเทียบ: สั่ง 1–100 แมตช์ด้วย seed ต่อเนื่อง ล็อก snapshot/revision ดูความคืบหน้า อัตราชนะ รอบเฉลี่ย เปรียบเทียบสองชุด ทดลองซ้ำด้วย snapshot เดิม และส่งออก CSV ผ่าน Bearer token
+- บัญชีและความปลอดภัย: เปลี่ยนรหัสผ่านพร้อมยืนยันช่องรหัสใหม่ ยกเลิกทุกเซสชัน และดู Audit ทีละ 50 รายการผ่าน opaque cursor
 - คิวและข้อผิดพลาด: แสดงงานทั้งหมดที่ API ส่งมา ลองใหม่เฉพาะงานสถานะ failed
 - สำรองและกู้คืน: สร้าง Backup ด้วยตนเอง ดูประวัติทดสอบกู้คืน โดยต้องพิมพ์ `RESTORE TEST` ยืนยันก่อนส่งคำขอ
 
-รุ่นนี้ไม่มีตาราง Backup อัตโนมัติ Backend จำกัด 20 Backup และ 40 ผลทดสอบกู้คืน เมื่อเต็มผู้ดูแลต้องจัดการบนเซิร์ฟเวอร์อย่างยืนยัน ไม่มีการลบอัตโนมัติ และ Dashboard ไม่มีคำสั่งกู้ทับฐานใช้งาน
+รุ่น 1.1 แสดงนโยบาย Backup จาก API: ตารางที่อนุมัติคือทุกวัน 03:00 น. เขตเวลา Asia/Bangkok เก็บใน VPS 7 ชุด และ Google Drive 30 ชุด การลบตามนโยบายจำกัดเฉพาะ Backup ที่ระบบนี้บันทึกไว้ Dashboard แสดงสถานะจริงของการตั้งค่าและสำเนาที่ผ่านการตรวจสอบ การเปิดตารางไม่ยืนยันว่าสำเนานอก VPS พร้อมใช้งาน ต้องดู configured, verifiedAt และ lastError ประกอบ และ Dashboard ไม่มีคำสั่งกู้ทับฐานใช้งาน
 
 ## การยืนยันตัวตนและคำสั่งซ้ำ
 
@@ -44,7 +46,7 @@ Dashboard ภาษาไทยสำหรับ Guild Arena v1 ใช้ HTML,
 | --- | --- |
 | POST `/auth/login` | `{username,password}` → `{token,expiresAt}` |
 | POST `/auth/logout` | ปิดเซสชันบนเซิร์ฟเวอร์ |
-| GET `/system/status` | `{api,worker,queue,matches,database,backup}` |
+| GET `/system/status` | `{api,worker,queue,matches,database,backup,storage,alerts}` |
 | GET `/teams` | `{teams:[{id,revision,schemaVersion,name,characters,createdAt,updatedAt}]}` |
 | POST `/teams` | ข้อมูลทีม → ทีมที่บันทึก |
 | PUT `/teams/:id` | ข้อมูลทีมพร้อม `revision` ปัจจุบัน |
@@ -76,3 +78,28 @@ node --check config.js
 ```
 
 ตรวจใน browser เพิ่ม: ล็อกอินผิด/ถูก, สร้างและแก้ทีม, ส่งแมตช์ซ้ำด้วยข้อมูลเดิม, เปิดผลและเล่นเหตุการณ์, ตรวจผลการจำลองซ้ำ, ลองงานล้มเหลว, Backup/ทดสอบกู้คืน, ออกจากระบบ และขนาดหน้าจอมือถือ
+
+## เพิ่มในรุ่น 1.1
+
+| คำขอ | ข้อมูลหลัก |
+| --- | --- |
+| POST `/auth/password` | `{currentPassword,newPassword}` → `{ok:true,reauthenticate:true}` |
+| POST `/auth/revoke-sessions` | `{currentPassword}` → ยกเลิกทุกเซสชันรวมเซสชันปัจจุบัน |
+| GET `/audit?limit=50&before=<cursor>` | `{entries:[{id,actor,actorName?,action,target,metadata,createdAt}],nextCursor}` |
+| POST `/batches` | `{name,teamAId,teamBId,teamARevision,teamBRevision,rulesVersion,startSeed,count}` + Idempotency-Key → `{id,status,reused}` |
+| GET `/batches` | `{batches:[...]}` |
+| GET `/batches/:id` | `{id,name,status,createdAt,input,summary,matches}` |
+| POST `/batches/:id/reruns` | Idempotency-Key → ชุดใหม่จาก snapshot/seed เดิม ไม่อ่าน revision ล่าสุด |
+| GET `/batches/:id/export.csv` | ดาวน์โหลด CSV ผ่าน fetch พร้อม Bearer token แล้วบันทึก Blob ไม่มีลิงก์ดาวน์โหลดแบบไม่ตรวจสิทธิ์ |
+| GET `/backup-policy` | `{schedule,retention,offsite,status}` |
+| GET `/backup-copies` | `{copies:[{backupId,provider,providerFileId,status,verifiedAt,sha256,...}]}` |
+
+รหัสผ่านใหม่ต้องยาว 12–1024 ตัวอักษร ต่างจากรหัสเดิม และตรงกับช่องยืนยัน หน้าเว็บล้างช่องรหัสผ่านทุกครั้งหลังส่งฟอร์ม เมื่อเปลี่ยนสำเร็จหรือยกเลิกทุกเซสชันจะล้างโทเคนและกลับหน้าล็อกอิน Backend จำกัดคำสั่งละเอียดอ่อนสองเส้นทางนี้รวม 5 ครั้งต่อ 15 นาทีต่อผู้ดูแล
+
+ชุดทดลองใช้ count จำนวนเต็ม 1–100 และ startSeed จำนวนเต็ม uint32 ในรูปสตริง โดย seed สุดท้ายต้องไม่เกิน 4294967295 การส่งข้อมูลเดิมหลังเครือข่ายขัดข้องหรือส่งซ้ำใช้ Idempotency-Key เดิม กด “เริ่มคำสั่งชุดใหม่” เมื่อต้องการสร้างชุดใหม่จากข้อมูลเดิม คีย์อยู่ในหน่วยความจำเท่านั้น การรีโหลดจึงต้องตรวจประวัติก่อนส่งใหม่
+
+winRateA และ winRateB เป็นเปอร์เซ็นต์ 0–100 คำนวณจากแมตช์ succeeded และเป็น null เมื่อยังไม่มีผลสำเร็จ averageRounds ใช้ผลสำเร็จเช่นกัน Dashboard แสดง succeeded/total และป้ายผลเบื้องต้นหากยังไม่ครบหรือมีแมตช์ล้มเหลว การเปรียบเทียบแสดงชื่อทีม revision กติกา seed และจำนวนตัวอย่างเพื่อไม่ให้ตีความสถิติข้ามเงื่อนไข
+
+ตารางเหตุการณ์ รายการแมตช์ในชุด Audit และสำเนา Backup จำกัดความสูงและเลื่อนภายในกรอบ พร้อมหัวตารางตรึง รองรับมือถือโดยไม่ขยายความกว้างทั้งหน้า
+
+การสำรองตามเวลาใน VPS ทำงานอิสระจาก Codex app ส่วนการส่งสำเนาไป Google Drive ใช้ Codex app ที่ต้องเปิดอยู่และเชื่อม Drive ได้ เมื่อแอปปิดหรือเชื่อมต่อไม่ได้ สำเนานอก VPS อาจค้างส่ง ให้ตรวจสถานะและ verifiedAt ของสำเนาจริง ชื่อชุดทดลองจำกัด 80 ตัวอักษรตาม Backend และ stats.speed อนุญาต 0 ตามกติกาต้นแบบ
