@@ -32,3 +32,9 @@
 @media(max-width:1150px){.runner-overview-grid{grid-template-columns:1fr}.runner-handoff h2{font-size:21px}}
 @media(max-width:680px){.runner-handoff{padding:19px 17px;border-radius:11px;margin-bottom:17px}.runner-handoff h2{font-size:20px}.runner-handoff p{font-size:11px}.runner-handoff .tiny-tag{font-size:8px;white-space:normal}.runner-overview-grid{gap:17px}.runner-card{padding:15px}.runner-card-header h3{font-size:13px}.runner-card>.tiny-tag{white-space:normal}.runner-readiness-grid{grid-template-columns:1fr}.runner-code-editor{min-height:330px}.runner-checklist li{font-size:10px}#view-runners>.panel>.panel-heading{flex-wrap:wrap}}
 .check-result.unavailable{background:#342e20;border-color:#675533;color:#e5ca89}
+
+/* รุ่น 1.3: จัดการบัญชีผู้เล่น */
+.player-search-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:end;margin-bottom:20px}.player-row-actions{min-width:190px}.player-entry{margin-top:24px;color:var(--gold);font-size:12px}.player-entry a:hover{text-decoration:underline}#players-list td{overflow-wrap:anywhere}#players-list td:first-child{min-width:200px}#view-players .panel-heading{flex-wrap:wrap}
+@media(max-width:680px){.player-search-form{grid-template-columns:1fr}.player-search-form>.button{justify-self:end}#view-players .snapshot-meta{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+@media(max-width:680px){.sidebar nav .nav-link{white-space:nowrap}}

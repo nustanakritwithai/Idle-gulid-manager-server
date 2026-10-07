@@ -25,6 +25,7 @@ jobs:
         run: |
           node --check app.js
           node --check config.js
+          node --check player.js
       - name: Verify public API and access control
         run: |
           node --input-type=module <<'JS'
@@ -34,6 +35,11 @@ jobs:
           assert.equal(health.status, 200);
           assert.equal((await health.json()).status, 'ok');
           assert.equal((await fetch(`${base}/api/v1/system/status`)).status, 401);
+          assert.equal((await fetch(`${base}/api/v1/players`)).status, 401);
+          assert.equal((await fetch(`${base}/api/v1/player/me`)).status, 401);
+          const playerConfig = await fetch(`${base}/api/v1/player/auth/config`);
+          assert.equal(playerConfig.status, 200);
+          assert.equal((await playerConfig.json()).passwordMinLength, 15);
           assert.equal((await fetch(`${base}/api/v1/teams`, {headers: {Origin: 'https://invalid.example'}})).status, 403);
           const cors = await fetch(`${base}/api/v1/teams`, {method: 'OPTIONS', headers: {Origin: 'https://nustanakritwithai.github.io', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization'}});
           assert.equal(cors.status, 204);
@@ -44,7 +50,7 @@ jobs:
       - name: Prepare public files
         run: |
           mkdir public
-          cp index.html styles.css app.js config.js .nojekyll public/
+          cp index.html styles.css app.js config.js player.html player.js player.css .nojekyll public/
       - uses: actions/upload-pages-artifact@v4
         with:
           path: public

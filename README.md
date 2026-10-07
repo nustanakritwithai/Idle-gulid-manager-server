@@ -1,6 +1,6 @@
 # Guild Arena — Server Manager Dashboard
 
-Dashboard ภาษาไทยสำหรับ Guild Arena v1.2 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ส่วนข้อมูลและคำสั่งจัดการทุกอย่างเรียก Backend บน VPS ซึ่งต้องยืนยันสิทธิ์แอดมิน
+Dashboard ภาษาไทยสำหรับ Guild Arena v1.3 ใช้ HTML, CSS และ JavaScript ES modules โดยไม่มีขั้นตอน build หรือ dependency ภายนอก เผยแพร่เป็นเว็บสาธารณะผ่าน GitHub Pages ข้อมูลและคำสั่งจัดการเรียก Backend บน VPS ซึ่งตรวจสิทธิ์แอดมิน มีหน้าบัญชีผู้เล่นแยกที่ player.html และใช้สิทธิ์ผู้เล่นเฉพาะของตน
 
 ## เปิดใช้งาน
 
@@ -40,7 +40,7 @@ Dashboard ภาษาไทยสำหรับ Guild Arena v1.2 ใช้ HTM
 
 ## สัญญา API
 
-ทุก endpoint ใช้ prefix `/api/v1` และทุกคำขอยกเว้น login ส่ง `Authorization: Bearer <token>`
+ตารางคำสั่งแอดมินด้านล่างใช้ prefix `/api/v1` และทุกคำขอยกเว้น login ส่ง `Authorization: Bearer <token>` ส่วนเส้นทางบัญชีผู้เล่นและคำขอสาธารณะระบุแยกในหัวข้อ Manager 1.3
 
 | คำขอ | ข้อมูลหลัก |
 | --- | --- |
@@ -75,6 +75,7 @@ Dashboard ภาษาไทยสำหรับ Guild Arena v1.2 ใช้ HTM
 ```text
 node --check app.js
 node --check config.js
+node --check player.js
 ```
 
 ตรวจใน browser เพิ่ม: ล็อกอินผิด/ถูก, สร้างและแก้ทีม, ส่งแมตช์ซ้ำด้วยข้อมูลเดิม, เปิดผลและเล่นเหตุการณ์, ตรวจผลการจำลองซ้ำ, ลองงานล้มเหลว, Backup/ทดสอบกู้คืน, ออกจากระบบ และขนาดหน้าจอมือถือ
@@ -125,3 +126,32 @@ winRateA และ winRateB เป็นเปอร์เซ็นต์ 0–10
 คำสั่งซ้ำใช้ Idempotency-Key ในหน่วยความจำ โดยเทียบ JSON ที่เรียง object keys แล้ว การสลับลำดับ key หรือปรับ whitespace จึงไม่สร้างคำสั่งใหม่ กด “เริ่มคำสั่งทดสอบใหม่” เมื่อต้องการส่งเป็นงานใหม่อย่างตั้งใจ
 
 ประวัติและ Snapshot แยก kind runner ออกจาก prototype-v1 งาน Fixture มีป้าย TEST ONLY และแสดง durationMs ตามผลตัวรัน เหตุการณ์ใหม่แสดงชนิด เวลา และ JSON ตามต้นฉบับ ไม่ใช้ตัวแสดงผลโจมตี/สกิล/HP ของ prototype ไปตีความ เหตุการณ์และผล Fixture ไม่ใช่ข้อมูลสำหรับสรุปสมดุลเกม
+
+## Manager 1.3 — บัญชีผู้เล่น
+
+เปิด player.html เพื่อสมัครหรือเข้าสู่ระบบผู้เล่น บัญชีผู้เล่นแยกสิทธิ์จากแอดมินโดย Backend หน้านี้เป็นส่วนบัญชีสำหรับให้ทีมเกมเชื่อมต่อ ยังไม่มีการต่อสู้ PvP หรือข้อมูลตัวละครเกมจริง ผู้เล่นสมัครสำเร็จแล้วเข้าสู่ระบบทันที ดูบัญชี เปลี่ยนรหัสผ่าน ออกจากระบบปัจจุบัน หรือยกเลิกทุกเซสชันด้วยรหัสผ่านปัจจุบันได้
+
+ชื่อผู้ใช้ยาว 3–32 ตัว ใช้ A–Z, a–z, 0–9, _ . - โดยถือพิมพ์ใหญ่/เล็กเป็นบัญชีเดียวกันและเก็บแบบ lowercase ชื่อที่แสดงไม่บังคับ ถ้าระบุให้ยาว 1–48 Unicode codepoints รหัสผ่านใหม่ยาว 15–128 Unicode codepoints ตามนโยบายที่ API ส่งมา ช่องยืนยันต้องตรงกัน หน้าเว็บล้างช่องรหัสผ่านหลังส่งฟอร์มเสมอ
+
+player.js เก็บ token ในหน่วยความจำของ module เท่านั้น ไม่เก็บ token หรือรหัสผ่านใน localStorage/sessionStorage/cookie/URL และไม่บันทึก URL API เมื่อรีโหลดหรือออกจากหน้า ต้องเข้าสู่ระบบใหม่ การเปลี่ยนรหัสผ่านและยกเลิกทุกเซสชันทำให้กลับหน้าล็อกอิน การเข้าสู่ระบบใช้สิทธิ์ผู้เล่นเท่านั้น ไม่สามารถเรียก API แอดมิน
+
+หน้าแอดมิน #players แสดงรายชื่อทีละ 50 บัญชี ค้นหาผ่าน API และใช้ opaque cursor โหลดก่อนหน้าได้ เปิด/ปิดรับสมัคร ระงับ/คืนบัญชี และยกเลิกเซสชันต้องยืนยัน พร้อมส่ง revision และ confirmation Backend เป็นผู้ตรวจสิทธิ์ ความขัดแย้งของ revision และบันทึก Audit การปิดรับสมัครไม่ปิดการล็อกอินบัญชีเดิม
+
+| คำขอ | ข้อมูลหลัก |
+| --- | --- |
+| GET /player/auth/config | public: registrationEnabled, revision, maxPlayers, sessionLifetimeSeconds, passwordMinLength, passwordMaxLength |
+| POST /player/auth/register | public: {username,password,displayName?} → {token,expiresAt,player} |
+| POST /player/auth/login | public: {username,password} → {token,expiresAt,player} |
+| GET /player/me | player token → {player,expiresAt} |
+| POST /player/auth/logout | ปิดเซสชันผู้เล่นปัจจุบัน |
+| POST /player/auth/password | {currentPassword,newPassword} → ต้องเข้าสู่ระบบใหม่ |
+| POST /player/auth/revoke-sessions | {currentPassword} → ยกเลิกทุกเซสชัน |
+| GET /players?search=&before=&limit=50 | admin → {players,nextCursor} |
+| GET /player-settings | admin → นโยบายสมัครผู้เล่น |
+| POST /player-settings | admin: {registrationEnabled,revision,confirmation} |
+| POST /players/:id/status | admin: {status,revision,confirmation} |
+| POST /players/:id/revoke-sessions | admin: {revision,confirmation} |
+
+เปิดรับสมัครตามค่าเริ่มต้นของ Backend แต่หน้าเว็บใช้สถานะ API จริงเสมอ หากตรวจสถานะไม่ได้จะปิดปุ่มสมัครและแจ้งข้อผิดพลาด Backend จำกัดอัตราสมัคร/ล็อกอิน/คำสั่งสำคัญ เมื่อถูกจำกัดจะแสดงเหตุผลจาก API โดยไม่ลองส่งอัตโนมัติ
+
+Workflow GitHub Pages ตรวจ syntax player.js และรวม player.html/player.js/player.css ใน public artifact ด้วย การทดสอบบัญชีใหม่ใช้ฐาน staging แยกจากข้อมูลผู้เล่นจริง

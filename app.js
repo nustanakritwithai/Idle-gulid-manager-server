@@ -7,6 +7,7 @@ const ROUTES = {
   match: ['BATTLE SIMULATOR', 'เริ่มการต่อสู้', 'เลือกสองทีม พร้อม seed และกติกาที่ตรวจสอบย้อนหลังได้', 'เริ่มการต่อสู้'],
   batches: ['EXPERIMENT LAB', 'ชุดทดลองและเปรียบเทียบ', 'ทดสอบหลาย seed วัดอัตราชนะ และเปรียบเทียบผลจาก snapshot ที่ล็อกไว้', 'ชุดทดลอง'],
   runners: ['RUNNER HANDOFF', 'เชื่อมตัวรัน', 'เตรียม Manager และตรวจช่องทางรับส่งข้อมูล รอรับมอบตัวรันเกมจริง', 'เชื่อมตัวรัน'],
+  players: ['PLAYER ACCOUNTS', 'บัญชีผู้เล่น', 'ค้นหาบัญชี กำหนดการสมัคร และจัดการสถานะการเข้าถึง', 'บัญชีผู้เล่น'],
   security: ['ACCOUNT & SECURITY', 'บัญชีและความปลอดภัย', 'จัดการรหัสผ่าน เซสชัน และตรวจบันทึกการใช้งานแอดมิน', 'ความปลอดภัย'],
   history: ['BATTLE ARCHIVE', 'ประวัติแมตช์', 'ติดตามผลและเปิดดูรายละเอียดของแต่ละการทดลอง', 'ประวัติแมตช์'],
   replay: ['SNAPSHOT & REPLAY', 'Snapshot และรีเพลย์', 'สำรวจเหตุการณ์และตรวจว่าการจำลองซ้ำให้ผลตรงกัน', 'Snapshot และรีเพลย์'],
@@ -17,7 +18,7 @@ const STATE_LABELS = {
   queued: 'รอประมวลผล', pending: 'รอประมวลผล', running: 'กำลังทำงาน', processing: 'กำลังทำงาน',
   succeeded: 'สำเร็จ', completed: 'สำเร็จ', success: 'สำเร็จ', failed: 'ล้มเหลว', error: 'ผิดพลาด',
   online: 'ออนไลน์', ok: 'พร้อมใช้งาน', healthy: 'พร้อมใช้งาน', missing: 'ไม่พบสัญญาณ', offline: 'ออฟไลน์',
-  unavailable: 'ยังไม่พร้อม', 'awaiting-handoff': 'รอรับมอบ', 'test-only': 'ทดสอบเท่านั้น', enabled: 'เปิดใช้งาน',
+  unavailable: 'ยังไม่พร้อม', 'awaiting-handoff': 'รอรับมอบ', 'test-only': 'ทดสอบเท่านั้น', enabled: 'เปิดใช้งาน', active: 'ใช้งานได้', suspended: 'ระงับบัญชี',
   disabled: 'ปิดใช้งาน', configured: 'ตั้งค่าแล้ว', unconfigured: 'ยังไม่ตั้งค่า', degraded: 'ต้องตรวจสอบ', uploaded: 'อัปโหลดแล้ว', deleted: 'ลบตามนโยบายแล้ว', uploading: 'กำลังอัปโหลด', partial: 'สำเร็จบางส่วน',
   creating: 'กำลังสร้าง', passed: 'ผ่าน', verified: 'ผ่านการตรวจสอบ', mismatch: 'ผลไม่ตรงกัน', ready: 'พร้อมใช้งาน',
 };
@@ -29,6 +30,7 @@ const state = {
   batches: [], selectedBatchId: null, batchDetail: null, pendingBatchCommand: null, batchBusy: false, rerunCommands: {}, comparison: null, compareIds: null, compareEpoch: 0,
   auditEntries: [], auditCursor: null, auditNextCursor: null, auditPage: 1, auditBusy: false, auditEpoch: 0, backupPolicy: null, backupCopies: [],
   runners: [], runnerReadiness: null, runnerRequestDirty: false, runnerBusy: false, runnerToggleBusy: false, pendingRunnerCommand: null, selectedRunnerMatchId: null, runnerMatch: null,
+  players: [], playerSettings: null, playerSearch: '', playerCursor: null, playerNextCursor: null, playerPage: 1, playerEpoch: 0, playerListBusy: false, playerMutationBusy: false,
   playback: null, refreshing: false, mutationBusy: false, restoreTarget: null, expiryTimer: null,
 };
 const requests = new Set();
@@ -56,8 +58,8 @@ function asText(value) {
 }
 function label(status) { return STATE_LABELS[status] || asText(status); }
 function pill(status) {
-  const good = ['succeeded', 'completed', 'success', 'online', 'ok', 'healthy', 'passed', 'verified', 'ready'];
-  const bad = ['failed', 'error', 'missing', 'offline', 'mismatch'];
+  const good = ['succeeded', 'completed', 'success', 'online', 'ok', 'healthy', 'passed', 'verified', 'ready', 'active'];
+  const bad = ['failed', 'error', 'missing', 'offline', 'mismatch', 'suspended'];
   const active = ['running', 'processing'];
   return element('span', `status-pill ${good.includes(status) ? 'success' : bad.includes(status) ? 'danger' : active.includes(status) ? 'active' : 'warning'}`, label(status));
 }
@@ -157,7 +159,7 @@ async function api(path, options = {}) {
 function endSession(message = '') {
   state.token = null; state.session += 1; state.username = ''; state.status = null;
   state.teams = []; state.matches = []; state.jobs = []; state.backups = []; state.restoreTests = [];
-  clearV11Session(); clearRunnerSession();
+  clearV11Session(); clearRunnerSession(); clearPlayersSession();
   state.snapshot = null; state.snapshotId = null; state.detail = null; state.selectedMatchId = null;
   state.pendingCommand = null; state.restoreTarget = null; state.refreshing = false;
   state.editTeamId = null; state.editRevision = null; state.teamDirty = false;
@@ -214,7 +216,7 @@ async function navigate() {
   const [eyebrow, title, description, crumb] = ROUTES[state.route];
   text('page-eyebrow', eyebrow); text('page-title', title); text('page-description', description); text('breadcrumb-current', crumb);
   document.title = `${crumb} · Guild Arena`;
-  text('page-badge',state.route==='runners'?'MANAGER 1.2 · TEST ONLY':'PROTOTYPE V1');
+  text('page-badge',state.route==='runners'?'MANAGER 1.3 · TEST ONLY':state.route==='players'?'PLAYER ACCOUNTS · V1.3':'PROTOTYPE V1');
   clearError('page-error');
   if (state.token) await refresh();
 }
@@ -234,6 +236,10 @@ async function refresh(quiet = false) {
     if (state.compareIds) { const epoch=state.compareEpoch; state.compareIds.forEach((id,index) => tasks.push({ path:'/batches/'+encodeURIComponent(id), assign:(data)=>{ if(state.compareEpoch===epoch && state.comparison) { state.comparison[index]=data?.batch || data; renderComparison(); } } })); }
   }
   if (route === 'security' && !state.auditBusy) { const epoch=state.auditEpoch; tasks.push({path:auditPath(state.auditCursor),assign:(data)=>{if(state.auditEpoch===epoch){state.auditEntries=list(data,'entries');state.auditNextCursor=data?.nextCursor ?? null;renderAudit();}}}); }
+  if (route === 'players' && !state.playerMutationBusy) {
+    const settingsEpoch=state.playerEpoch;tasks.push({path:'/player-settings',assign:(data)=>{if(settingsEpoch===state.playerEpoch){state.playerSettings=data;renderPlayerSettings();}}});
+    if(!state.playerListBusy){const epoch=state.playerEpoch;tasks.push({path:playersPath(state.playerCursor),assign:(data)=>{if(epoch===state.playerEpoch){state.players=list(data,'players');state.playerNextCursor=data?.nextCursor??null;renderPlayers();}}});}
+  }
   if (route === 'runners') {
     tasks.push({path:'/runners',assign:(data)=>{state.runners=list(data,'runners');state.runnerReadiness=data?.readiness??null;renderRunners();}});
     if(state.selectedRunnerMatchId){const id=state.selectedRunnerMatchId;tasks.push({path:'/matches/'+encodeURIComponent(id),assign:(data)=>{if(state.selectedRunnerMatchId===id){state.runnerMatch=data?.match||data;renderRunnerMatch();}}});}
@@ -878,7 +884,65 @@ function renderRunnerEvent(event,index){
   nodes.push(rawDetails('JSON เหตุการณ์นี้',event,true));replace('current-event',...nodes);
 }
 
+function clearPlayersSession(){
+  state.players=[];state.playerSettings=null;state.playerSearch='';state.playerCursor=null;state.playerNextCursor=null;state.playerPage=1;state.playerEpoch+=1;state.playerListBusy=false;state.playerMutationBusy=false;
+  $('player-search').value='';replace('players-list');replace('player-settings-summary');clearError('players-error');text('players-page-label','ยังไม่มีข้อมูล');$('players-next-button').disabled=true;$('registration-toggle-button').disabled=true;
+}
+function playersPath(cursor){return '/players?limit=50'+(state.playerSearch?'&search='+encodeURIComponent(state.playerSearch):'')+(cursor?'&before='+encodeURIComponent(cursor):'');}
+function renderPlayerSettings(){
+  const data=state.playerSettings,button=$('registration-toggle-button');
+  button.disabled=!data||state.playerMutationBusy;
+  if(!data){replace('player-settings-summary',element('p','muted','รอข้อมูลการสมัครจาก API'));return;}
+  button.textContent=data.registrationEnabled?'ปิดรับสมัครผู้เล่น':'เปิดรับสมัครผู้เล่น';
+  replace('player-settings-summary',detailItem('รับสมัครบัญชีใหม่',data.registrationEnabled?'เปิดรับสมัคร':'ปิดรับสมัคร'),detailItem('Revision',data.revision,true),detailItem('จำนวนบัญชีสูงสุด',data.maxPlayers??'API ไม่ระบุ'),detailItem('อายุเซสชัน',Number.isFinite(data.sessionLifetimeSeconds)?(data.sessionLifetimeSeconds/3600)+' ชั่วโมง':'API ไม่ระบุ'));
+}
+function renderPlayers(){
+  const busy=state.playerMutationBusy||state.playerListBusy;
+  $('players-next-button').disabled=busy||!state.playerNextCursor;$('players-latest-button').disabled=busy;$('players-search-button').disabled=busy;
+  text('players-page-label','หน้าที่ '+state.playerPage+' · '+state.players.length+' รายการ'+(state.playerSearch?' · ค้นหา “'+state.playerSearch+'”':'')+' · เรียงใหม่ไปเก่า');
+  if(!state.players.length){replace('players-list',empty('ไม่พบบัญชีผู้เล่น',state.playerSearch?'ลองค้นหาชื่ออื่น หรือกลับรายการล่าสุด':'บัญชีที่สมัครสำเร็จจะปรากฏที่นี่'));return;}
+  replace('players-list',table(['บัญชี / รหัสผู้เล่น','ชื่อที่แสดง','สถานะ','สมัครเมื่อ','Revision','จัดการ'],state.players.map((player)=>{
+    const identity=element('div');identity.append(element('strong','',player.username),element('small','subtext mono',player.id));
+    const buttons=element('div','button-row player-row-actions');
+    const statusButton=action(player.status==='suspended'?'คืนสิทธิ์บัญชี':'ระงับบัญชี',()=>changePlayerStatus(player));
+    const revokeButton=action('ยกเลิกเซสชัน',()=>revokePlayerSessions(player));statusButton.disabled=busy;revokeButton.disabled=busy;buttons.append(statusButton,revokeButton);
+    return [identity,player.displayName||'—',pill(player.status),stamp(player.createdAt),player.revision,buttons];
+  })));
+}
+async function loadPlayersPage(cursor=null){
+  if(state.playerListBusy||state.playerMutationBusy)return;
+  state.playerListBusy=true;const epoch=++state.playerEpoch;clearError('players-error');renderPlayers();
+  try{const data=await api(playersPath(cursor));if(epoch!==state.playerEpoch)return;state.players=list(data,'players');state.playerCursor=cursor;state.playerNextCursor=data?.nextCursor??null;state.playerPage=cursor?state.playerPage+1:1;}
+  catch(error){showError('players-error',error);}finally{state.playerListBusy=false;renderPlayers();}
+}
+async function playerAdminMutation(path,body,message){
+  if(state.playerMutationBusy)return;
+  state.playerMutationBusy=true;state.playerEpoch+=1;clearError('players-error');renderPlayers();renderPlayerSettings();
+  try{await api(path,{method:'POST',body});notice(message);const [settings,players]=await Promise.all([api('/player-settings'),api(playersPath(state.playerCursor))]);state.playerSettings=settings;state.players=list(players,'players');state.playerNextCursor=players?.nextCursor??null;}
+  catch(error){showError('players-error',error);}
+  finally{state.playerMutationBusy=false;renderPlayers();renderPlayerSettings();}
+}
+function togglePlayerRegistration(){
+  const settings=state.playerSettings;if(!settings||state.playerMutationBusy)return;const enabled=!settings.registrationEnabled;
+  if(!window.confirm(enabled?'เปิดรับสมัครบัญชีผู้เล่นใหม่ใช่หรือไม่?':'ปิดรับสมัครบัญชีผู้เล่นใหม่ใช่หรือไม่? บัญชีเดิมยังเข้าสู่ระบบได้'))return;
+  return playerAdminMutation('/player-settings',{registrationEnabled:enabled,revision:settings.revision,confirmation:enabled?'ENABLE PLAYER REGISTRATION':'DISABLE PLAYER REGISTRATION'},enabled?'เปิดรับสมัครผู้เล่นแล้ว':'ปิดรับสมัครผู้เล่นแล้ว');
+}
+function changePlayerStatus(player){
+  if(state.playerMutationBusy)return;const status=player.status==='suspended'?'active':'suspended';
+  if(!window.confirm((status==='active'?'คืนสิทธิ์ให้บัญชี “':'ระงับบัญชี “')+player.username+'” ใช่หรือไม่?'))return;
+  return playerAdminMutation('/players/'+encodeURIComponent(player.id)+'/status',{status,revision:player.revision,confirmation:status==='active'?'ACTIVATE PLAYER':'SUSPEND PLAYER'},status==='active'?'คืนสิทธิ์บัญชีแล้ว':'ระงับบัญชีแล้ว');
+}
+function revokePlayerSessions(player){
+  if(state.playerMutationBusy)return;
+  if(!window.confirm('ยกเลิกทุกเซสชันของ “'+player.username+'” ใช่หรือไม่? ผู้เล่นต้องเข้าสู่ระบบใหม่'))return;
+  return playerAdminMutation('/players/'+encodeURIComponent(player.id)+'/revoke-sessions',{revision:player.revision,confirmation:'REVOKE PLAYER SESSIONS'},'ยกเลิกเซสชันของผู้เล่นแล้ว');
+}
+
 $('api-url').value=publicStoredUrl() || API_BASE;
+$('players-search-form').addEventListener('submit',(event)=>{event.preventDefault();if(state.playerListBusy||state.playerMutationBusy)return;state.playerSearch=$('player-search').value.trim();loadPlayersPage();});
+$('players-next-button').addEventListener('click',()=>loadPlayersPage(state.playerNextCursor));
+$('players-latest-button').addEventListener('click',()=>{if(state.playerListBusy||state.playerMutationBusy)return;state.playerSearch='';$('player-search').value='';loadPlayersPage();});
+$('registration-toggle-button').addEventListener('click',togglePlayerRegistration);
 $('login-form').addEventListener('submit',login);
 $('logout-button').addEventListener('click',logout);
 $('topbar-logout-button').addEventListener('click',logout);
@@ -929,4 +993,3 @@ window.addEventListener('beforeunload',(event)=>{if((state.teamDirty || state.ru
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stopPlayback();else if(state.token)refresh(true);});
 setInterval(()=>{if(state.token && !document.hidden && !$('restore-dialog').open)refresh(true);},15000);
 navigate();
-
