@@ -25,6 +25,21 @@ jobs:
         run: |
           node --check app.js
           node --check config.js
+      - name: Verify public API and access control
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          const base = 'https://guild-arena.157.85.96.139.sslip.io';
+          const health = await fetch(`${base}/health/live`);
+          assert.equal(health.status, 200);
+          assert.equal((await health.json()).status, 'ok');
+          assert.equal((await fetch(`${base}/api/v1/system/status`)).status, 401);
+          assert.equal((await fetch(`${base}/api/v1/teams`, {headers: {Origin: 'https://invalid.example'}})).status, 403);
+          const cors = await fetch(`${base}/api/v1/teams`, {method: 'OPTIONS', headers: {Origin: 'https://nustanakritwithai.github.io', 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization'}});
+          assert.equal(cors.status, 204);
+          assert.equal(cors.headers.get('access-control-allow-origin'), 'https://nustanakritwithai.github.io');
+          console.log('HTTPS, unauthorized API rejection, and CORS passed from GitHub runner.');
+          JS
       - uses: actions/configure-pages@v5
       - name: Prepare public files
         run: |
