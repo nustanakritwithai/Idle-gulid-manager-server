@@ -6,7 +6,7 @@ const ROUTES = {
   teams: ['TEAM WORKSHOP', 'ทีมจำลอง', 'จัดสเตตัส อุปกรณ์ และสกิลให้ทีม 3 ตัวละคร', 'ทีมจำลอง'],
   match: ['BATTLE SIMULATOR', 'เริ่มการต่อสู้', 'เลือกสองทีม พร้อม seed และกติกาที่ตรวจสอบย้อนหลังได้', 'เริ่มการต่อสู้'],
   batches: ['EXPERIMENT LAB', 'ชุดทดลองและเปรียบเทียบ', 'ทดสอบหลาย seed วัดอัตราชนะ และเปรียบเทียบผลจาก snapshot ที่ล็อกไว้', 'ชุดทดลอง'],
-  runners: ['RUNNER HANDOFF', 'เชื่อมตัวรัน', 'เตรียม Manager และตรวจช่องทางรับส่งข้อมูล รอรับมอบตัวรันเกมจริง', 'เชื่อมตัวรัน'],
+  runners: ['RUNNER HANDOFF', 'เชื่อมตัวรัน', 'ตรวจทะเบียน เวอร์ชัน และสถานะรับงานของตัวรันเกมและตัวทดสอบ', 'เชื่อมตัวรัน'],
   players: ['PLAYER ACCOUNTS', 'บัญชีผู้เล่น', 'ค้นหาบัญชี กำหนดการสมัคร และจัดการสถานะการเข้าถึง', 'บัญชีผู้เล่น'],
   security: ['ACCOUNT & SECURITY', 'บัญชีและความปลอดภัย', 'จัดการรหัสผ่าน เซสชัน และตรวจบันทึกการใช้งานแอดมิน', 'ความปลอดภัย'],
   history: ['BATTLE ARCHIVE', 'ประวัติแมตช์', 'ติดตามผลและเปิดดูรายละเอียดของแต่ละการทดลอง', 'ประวัติแมตช์'],
@@ -216,7 +216,7 @@ async function navigate() {
   const [eyebrow, title, description, crumb] = ROUTES[state.route];
   text('page-eyebrow', eyebrow); text('page-title', title); text('page-description', description); text('breadcrumb-current', crumb);
   document.title = `${crumb} · Guild Arena`;
-  text('page-badge',state.route==='runners'?'MANAGER 1.4 · TEST ONLY':state.route==='players'?'PLAYER ACCOUNTS · V1.4':'PROTOTYPE V1');
+  text('page-badge',state.route==='runners'?'RUNNER REGISTRY':state.route==='players'?'PLAYER ACCOUNTS · V1.4':'PROTOTYPE V1');
   clearError('page-error');
   if (state.token) await refresh();
 }
@@ -775,54 +775,58 @@ function renderBackupCopies() {
 }
 
 
-function isRunnerRecord(record){return record?.kind==='runner'||record?.input?.kind==='runner'||(record?.snapshotSchemaVersion===2&&!!(record?.runner||record?.input?.runner));}
+function isRunnerRecord(record){return record?.kind==='runner'||record?.input?.kind==='runner'||([2,3].includes(record?.snapshotSchemaVersion)&&!!(record?.runner||record?.input?.runner));}
 function runnerMetadata(record){return record?.input?.runner||record?.runner||{};}
 function runnerIsTest(record){return record?.testOnly===true||record?.isTestOnly===true||record?.result?.isTestOnly===true||runnerMetadata(record).id==='manager-fixture';}
 function runnerCaption(record){const runner=runnerMetadata(record);return (runner.id||'ตัวรัน')+(runner.version?' · v'+runner.version:'');}
-function matchOutcome(record){if(isRunnerRecord(record)){const result=record.result;return runnerIsTest(record)?'TEST ONLY · ทดสอบตัวเชื่อมต่อ':result?.reason||'ผลจากตัวรัน';}return winnerText(record.result?.winner||record.winner);}
+function matchOutcome(record){if(isRunnerRecord(record)){const result=record.result;if(runnerIsTest(record))return 'TEST ONLY · ทดสอบตัวเชื่อมต่อ';const duration=record.durationMs??result?.durationMs;return winnerText(result?.winner??record.winner)+(typeof duration==='number'&&Number.isFinite(duration)?' · '+durationLabel(duration):'');}return winnerText(record.result?.winner||record.winner);}
 function durationLabel(value){return typeof value==='number'&&Number.isFinite(value)?value+' ms':'—';}
 function rawDetails(caption,value,open=false){const details=element('details','raw-details');details.open=open;details.append(element('summary','',caption),element('pre','json-output',pretty(value)));return details;}
 function clearRunnerSession(){
+  text('runner-handoff-tag','GAME RUNNER · ตรวจทะเบียน');text('runner-handoff-title','สถานะตัวรันเกมจากเซิร์ฟเวอร์');text('runner-handoff-description','กำลังอ่านสถานะการติดตั้งและความพร้อมจาก API');
   state.runners=[];state.runnerReadiness=null;state.runnerRequestDirty=false;state.runnerBusy=false;state.runnerToggleBusy=false;state.pendingRunnerCommand=null;state.selectedRunnerMatchId=null;state.runnerMatch=null;
   ['runner-readiness','runner-registry','runner-submitted','runner-result-meta'].forEach((id)=>replace(id));
   $('runner-request-json').value='';text('runner-result-json','');text('runner-match-json','');clearError('runner-request-error');
   $('runner-submitted').hidden=true;$('runner-result-panel').hidden=true;$('snapshot-kind-notice').hidden=true;
 }
+function registryIsTest(runner){return runner.testOnly===true||runner.isTestOnly===true||runner.kind==='test';}
 function renderRunners(){
-  const readiness=state.runnerReadiness;
+  const readiness=state.runnerReadiness,installedGame=state.runners.find(r=>r.kind==='game'&&r.available===true),gameReady=readiness?.realRunnerReady===true;
+  text('runner-handoff-tag',gameReady?'GAME RUNNER · READY':installedGame?'GAME RUNNER · INSTALLED':'GAME RUNNER · ตรวจทะเบียน');
+  text('runner-handoff-title',gameReady?'ตัวรันเกมพร้อมรับงาน':installedGame?'ติดตั้งตัวรันเกมแล้ว ยังไม่เปิดรับงาน':'สถานะตัวรันเกมจากเซิร์ฟเวอร์');
+  text('runner-handoff-description',installedGame?'ตัวรัน '+installedGame.id+' รุ่น '+installedGame.version+' ใช้ artifact และ protocol ที่ล็อกไว้ ตรวจสถานะเปิดรับงานและโหมดผู้เล่นแยกกัน ทีมเป็น client-submitted ยังไม่มีอันดับหรือรางวัล':readiness?.message||'กำลังอ่านสถานะการติดตั้งและความพร้อมจาก API');
   if(!readiness)replace('runner-readiness',element('p','muted small-text','API ยังไม่ส่งสถานะความพร้อม'));
   else{
-    const header=element('div','runner-readiness-status');header.append(pill(readiness.status||'awaiting-handoff'),element('p','',readiness.message||'รอข้อมูลจากทีมตัวรันเกม'));
-    const grid=element('div','policy-grid runner-readiness-grid');grid.append(detailItem('ตัวรันเกมจริง',readiness.realRunnerReady===true?'API รายงานว่ารับมอบตัวรันแล้ว':'ยังไม่พร้อม / รอรับมอบ'),detailItem('ตัวทดสอบ Manager',readiness.testRunnerEnabled===true?'เปิดไว้เพื่อทดสอบ':readiness.testRunnerEnabled===false?'ปิดใช้งาน':'API ไม่ระบุ'),detailItem('สัญญาข้อมูล','ฉบับร่าง รอทีมเกมรับรอง'));
-    const checklist=element('ul','runner-checklist');
-    const missing=Array.isArray(readiness.missing)?readiness.missing:[];
-    if(missing.length)missing.forEach((item)=>{const row=element('li');row.append(element('span','check-pending','รอ'),element('span','',typeof item==='string'?item.label||item:item.label||item.message||asText(item)));checklist.append(row);});
-    else checklist.append(element('li','muted small-text','API ไม่ได้ระบุรายการรอรับมอบเพิ่มเติม ดูรายละเอียดสถานะประกอบ'));
-    replace('runner-readiness',header,grid,element('h3','runner-checklist-title','รายการที่รอทีมเกม'),checklist,rawDetails('สถานะจาก API',readiness));
+    const header=element('div','runner-readiness-status');header.append(pill(gameReady?'ready':installedGame?'disabled':readiness.status||'unavailable'),element('p','',gameReady?(readiness.message||'API รายงานพร้อมรับงาน'):installedGame?'พบ artifact เกมที่ตรงทะเบียน แต่ตัวรันยังปิดรับงาน':readiness.message||'ตรวจรายละเอียดทะเบียนด้านข้าง'));
+    const grid=element('div','policy-grid runner-readiness-grid');grid.append(detailItem('ตัวรันเกม',gameReady?'พร้อมรับงาน':installedGame?'ติดตั้งแล้ว · ปิดรับงาน':'ยังไม่พร้อม'),detailItem('ตัวทดสอบ Manager',readiness.testRunnerEnabled===true?'เปิดไว้เพื่อทดสอบ':readiness.testRunnerEnabled===false?'ปิดใช้งาน':'API ไม่ระบุ'),detailItem('Protocol เกม',installedGame?.protocolVersion||'API ยังไม่ระบุ'),detailItem('สถานะข้อมูลทีม','client-submitted · ไม่มีอันดับหรือรางวัล'));
+    const checklist=element('ul','runner-checklist'),missing=Array.isArray(readiness.missing)?readiness.missing:[];
+    if(installedGame&&!gameReady)checklist.append(element('li','muted small-text','ตัวรันติดตั้งแล้ว แอดมินตรวจทะเบียนและยืนยันก่อนเปิดรับงาน ส่วนโหมดผู้เล่นเปิดแยกในหน้าบัญชีผู้เล่น'));
+    else if(missing.length)missing.forEach(item=>{const row=element('li');row.append(element('span','check-pending','รอ'),element('span','',typeof item==='string'?item:item.label||item.message||asText(item)));checklist.append(row);});
+    else checklist.append(element('li','muted small-text','API ไม่ระบุรายการขาดเพิ่มเติม การเปิดโหมดผู้เล่นตรวจแยกจากสถานะตัวรัน'));
+    replace('runner-readiness',header,grid,element('h3','runner-checklist-title','เงื่อนไขก่อนรับงาน'),checklist,rawDetails('สถานะจาก API',readiness));
   }
   if(!state.runners.length)replace('runner-registry',empty('ยังไม่มีทะเบียนตัวรัน','โหลดข้อมูลใหม่เพื่อตรวจสถานะจากเซิร์ฟเวอร์'));
-  else replace('runner-registry',...state.runners.map((runner)=>{
-    const card=element('article','runner-card'),head=element('div','runner-card-header'),title=element('div');title.append(element('h3','',runner.name||runner.id),element('small','mono',runner.id));head.append(title,pill(runner.status|| (runner.enabled?'ready':'disabled')));card.append(head);
-    const testOnly=runner.testOnly===true||runner.isTestOnly===true||runner.kind==='test';
-    card.append(element('span','tiny-tag',testOnly?'TEST ONLY · ไม่มีการต่อสู้':'GAME RUNNER · รอรับมอบ'));
-    const data=element('div','runner-manifest-grid');data.append(detailItem('เวอร์ชัน',runner.version,true),detailItem('Protocol',runner.protocolVersion,true),detailItem('Revision',runner.revision),detailItem('Artifact hash',runner.artifactHash,true));card.append(data);
+  else replace('runner-registry',...state.runners.map(runner=>{
+    const card=element('article','runner-card'),head=element('div','runner-card-header'),title=element('div');title.append(element('h3','',runner.name||runner.id),element('small','mono',runner.id));head.append(title,pill(runner.status||(runner.enabled?'ready':'disabled')));card.append(head);
+    const testOnly=registryIsTest(runner);card.append(element('span','tiny-tag',testOnly?'TEST ONLY · ไม่มีการต่อสู้':runner.available?'GAME RUNNER · '+(runner.enabled?'เปิดรับงาน':'ติดตั้งแล้ว · ปิดรับงาน'):'GAME RUNNER · รายการนี้ยังไม่พร้อม'));
+    const data=element('div','runner-manifest-grid');data.append(detailItem('เวอร์ชัน',runner.version,true),detailItem('Protocol',runner.protocolVersion,true),detailItem('Artifact พร้อม',runner.available===true?'พร้อม':runner.available===false?'ไม่พร้อม':'API ไม่ระบุ'),detailItem('เปิดรับงาน',runner.enabled===true?'เปิด':'ปิด'),detailItem('Revision',runner.revision),detailItem('Artifact hash',runner.artifactHash,true));card.append(data);
     if(runner.reason)card.append(element('p','field-help',runner.reason));
-    if(testOnly&&runner.available===true){const toggle=action(runner.enabled?'ปิดตัวทดสอบ':'เปิดตัวทดสอบ',()=>toggleRunner(runner),runner.enabled?'secondary small':'primary small');toggle.disabled=state.runnerToggleBusy||!Number.isInteger(runner.revision);card.append(toggle);}
-    else card.append(element('p','muted small-text','ยังไม่มีตัวรันเกมให้เปิดใช้งาน'));
+    if(['manager-fixture','igm-sim-hex'].includes(runner.id)&&(runner.available===true||runner.enabled===true)){const caption=testOnly?'ตัวทดสอบ':'ตัวรันเกม',toggle=action((runner.enabled?'ปิด':'เปิด')+caption,()=>toggleRunner(runner),runner.enabled?'secondary small':'primary small');toggle.disabled=state.runnerToggleBusy||!Number.isInteger(runner.revision);card.append(toggle);}
+    else card.append(element('p','muted small-text',runner.enabled?'ตรวจสถานะทะเบียนจาก Backend ก่อนเปลี่ยนการรับงาน':'รายการนี้ยังเปิดรับงานไม่ได้'));
     card.append(rawDetails('Manifest / ทะเบียนจาก API',runner.manifest||runner));return card;
   }));
-  const fixture=state.runners.find((runner)=>runner.id==='manager-fixture');
-  text('runner-fixture-status',fixture?.enabled===true&&fixture.available===true?'ตัวทดสอบ Manager เปิดใช้งาน · ส่งงานทดสอบการรับส่งข้อมูลได้ ไม่มีการต่อสู้':fixture?'ตัวทดสอบ Manager ปิดใช้งาน · เปิดและยืนยันในทะเบียนก่อนส่งงาน':'ยังไม่ได้รับทะเบียน manager-fixture จาก API');
+  const fixture=state.runners.find(runner=>runner.id==='manager-fixture');
+  text('runner-fixture-status',fixture?.enabled===true&&fixture.available===true?'ตัวทดสอบ Manager เปิดใช้งาน · ส่งงานทดสอบการรับส่งข้อมูลได้ ไม่มีการต่อสู้':fixture?.available===true?'ตัวทดสอบ Manager ปิดใช้งาน · เปิดและยืนยันในทะเบียนก่อนส่งงาน':fixture?'artifact ตัวทดสอบ Manager ไม่พร้อม ตรวจทะเบียนก่อนส่งงาน':'ยังไม่ได้รับทะเบียน manager-fixture จาก API');
   $('runner-submit-button').disabled=state.runnerBusy||fixture?.enabled!==true||fixture?.available!==true;
 }
 async function reloadRunners(){const data=await api('/runners');state.runners=list(data,'runners');state.runnerReadiness=data?.readiness??null;renderRunners();}
 async function toggleRunner(runner){
-  if(state.runnerToggleBusy)return;const enabled=!runner.enabled;
-  const prompt=enabled?'เปิดตัวทดสอบ Manager หรือไม่? ใช้ทดสอบการรับส่งข้อมูลเท่านั้น ไม่มีการต่อสู้ การเปลี่ยนแปลงนี้จะถูกบันทึกใน Audit':'ปิดตัวทดสอบ Manager หรือไม่? การเปลี่ยนแปลงนี้จะถูกบันทึกใน Audit';
+  if(state.runnerToggleBusy)return;const enabled=!runner.enabled,testOnly=registryIsTest(runner),caption=testOnly?'ตัวทดสอบ Manager':'ตัวรันเกม '+runner.id+' รุ่น '+runner.version;
+  const prompt=(enabled?'เปิด':'ปิด')+caption+' ใช่หรือไม่? '+(testOnly?'ใช้ทดสอบการรับส่งข้อมูลเท่านั้น ไม่มีการต่อสู้':'ใช้ Sim/Hex ตาม artifact ที่ล็อกไว้ โหมดผู้เล่นเปิดแยกต่างหาก ยังไม่มีอันดับหรือรางวัล')+' การเปลี่ยนแปลงนี้จะถูกบันทึกใน Audit';
   if(!window.confirm(prompt))return;
   state.runnerToggleBusy=true;renderRunners();
-  try{await api('/runners/'+encodeURIComponent(runner.id)+'/enabled',{method:'POST',body:{enabled,revision:runner.revision,confirmation:enabled?'ENABLE TEST RUNNER':'DISABLE RUNNER'}});notice(enabled?'เปิดตัวทดสอบ Manager แล้ว':'ปิดตัวทดสอบ Manager แล้ว');await reloadRunners();}
-  catch(error){notice(errorMessage(error),true);}finally{state.runnerToggleBusy=false;renderRunners();}
+  try{await api('/runners/'+encodeURIComponent(runner.id)+'/enabled',{method:'POST',body:{enabled,revision:runner.revision,confirmation:enabled?(testOnly?'ENABLE TEST RUNNER':'ENABLE GAME RUNNER'):'DISABLE RUNNER'}});notice((enabled?'เปิด':'ปิด')+caption+' แล้ว');await reloadRunners();}
+  catch(error){notice(errorMessage(error),true);if(errorMessage(error).includes('REVISION_CONFLICT')){try{await reloadRunners();}catch{notice('ยังโหลดทะเบียนล่าสุดไม่ได้ กรุณาโหลดข้อมูลใหม่ก่อนลองอีกครั้ง',true);}}}finally{state.runnerToggleBusy=false;renderRunners();}
 }
 async function loadRunnerFixture(){
   if(state.runnerRequestDirty&&!window.confirm('ต้องการแทนที่ JSON ที่แก้ไขไว้ด้วยคำขอ Fixture จาก API หรือไม่?'))return;
@@ -833,6 +837,7 @@ async function loadRunnerFixture(){
 function runnerPayload(){
   let payload;try{payload=JSON.parse($('runner-request-json').value);}catch{throw new Error('คำขอ Fixture ต้องเป็น JSON ที่ถูกต้อง');}
   if(!payload||typeof payload!=='object'||Array.isArray(payload))throw new Error('คำขอต้องเป็น JSON object');
+  if(payload.runner?.id!=='manager-fixture')throw new Error('แบบฟอร์มนี้รองรับเฉพาะ manager-fixture; งานเกมส่งจากไคลเอนต์เกม');
   for(const side of ['teamA','teamB']){const characters=payload[side]?.characters;if(!Array.isArray(characters)||characters.length<1||characters.length>3)throw new Error(side+' ต้องมีตัวละคร 1–3 ตัว ตามสัญญาตัวรัน');}
   return payload;
 }
@@ -864,7 +869,7 @@ function renderRunnerMatch(){
 function renderRunnerMatchDetail(match){
   $('match-detail-panel').hidden=false;
   const input=match.input||{},metadata=runnerMetadata(match),grid=element('div','match-detail-grid');
-  grid.append(detailItem('รหัสงาน',match.id||state.selectedMatchId,true),detailItem('สถานะ',label(match.status)),detailItem('ชนิดงาน',runnerIsTest(match)?'TEST ONLY · ไม่มีการต่อสู้':'Runner'),detailItem('ตัวรัน',runnerCaption(match)),detailItem('Protocol',metadata.protocolVersion,true),detailItem('Seed',input.seed??match.seed,true),detailItem('durationMs จากผล',durationLabel(match.durationMs??match.result?.durationMs)),detailItem('Rules / Content / Map',asText(input.versions)),detailItem('เริ่มเมื่อ',stamp(match.createdAt)),detailItem('เสร็จเมื่อ',stamp(match.completedAt)),detailItem('Input hash',match.inputHash,true),detailItem('Output hash',match.outputHash,true));
+  grid.append(detailItem('รหัสงาน',match.id||state.selectedMatchId,true),detailItem('สถานะ',label(match.status)),detailItem('ชนิดงาน',runnerIsTest(match)?'TEST ONLY · ไม่มีการต่อสู้':'GAME RUNNER'),detailItem('ผล',runnerIsTest(match)?'ทดสอบตัวเชื่อมต่อ':winnerText(match.result?.winner??match.winner)),detailItem('ตัวรัน',runnerCaption(match)),detailItem('Protocol',metadata.protocolVersion,true),detailItem('Seed',input.seed??match.seed,true),detailItem('durationMs จากผล',durationLabel(match.durationMs??match.result?.durationMs)),detailItem('Rules / Content / Map',asText(input.versions)),detailItem('เริ่มเมื่อ',stamp(match.createdAt)),detailItem('เสร็จเมื่อ',stamp(match.completedAt)),detailItem('Input hash',match.inputHash,true),detailItem('Output hash',match.outputHash,true));
   const nodes=[element('p','info-box page-info',runnerIsTest(match)?'TEST ONLY — ผลนี้มาจากตัวทดสอบการรับส่งข้อมูลของ Manager ไม่มีการจำลองต่อสู้ และไม่ยืนยันความพร้อมของตัวรันเกมจริง':'ข้อมูลของงานตัวรันแสดงตามสัญญา โดยไม่ตีความเป็นกติกาต้นแบบ'),grid,rawDetails('Result จากตัวรัน',match.result,true),rawDetails('ข้อมูล Snapshot / งานทั้งหมด',match)];
   if(match.error)nodes.push(element('p','inline-error',asText(match.error)));replace('match-detail',...nodes);
 }
@@ -872,8 +877,8 @@ function renderSnapshotMeta(snapshot,id){
   const runner=isRunnerRecord(snapshot);$('snapshot-kind-notice').hidden=!runner;
   if(runner){
     const input=snapshot.input||snapshot,metadata=runnerMetadata(snapshot),result=snapshot.result||snapshot.output?.result;
-    text('snapshot-kind-notice',runnerIsTest(snapshot)?'TEST ONLY — Snapshot v2 ของตัวทดสอบ Manager ไม่มีการต่อสู้ เหตุการณ์และผลด้านล่างเป็นข้อมูลจากตัวเชื่อมต่อ':'Snapshot v2 ของตัวรัน แสดงเหตุการณ์และผลตามสัญญาของตัวรันโดยไม่ใช้สูตรแสดงผลของ prototype-v1');
-    replace('snapshot-meta',detailItem('รหัสงาน',snapshot.matchId||snapshot.id||id,true),detailItem('ชนิด / รูปแบบ','runner · snapshotSchemaVersion '+(input.snapshotSchemaVersion??snapshot.snapshotSchemaVersion??2)),detailItem('ตัวรัน',runnerCaption(snapshot)),detailItem('Protocol',metadata.protocolVersion,true),detailItem('Seed',input.seed,true),detailItem('durationMs จากผล',durationLabel(result?.durationMs??snapshot.durationMs)),detailItem('Rules / Content / Map',input.versions),detailItem('Artifact hash',metadata.artifactHash,true),detailItem('เหตุการณ์',snapshotEvents().length+' รายการ'));
+    text('snapshot-kind-notice',runnerIsTest(snapshot)?'TEST ONLY — Snapshot v2 ของตัวทดสอบ Manager ไม่มีการต่อสู้ เหตุการณ์และผลด้านล่างเป็นข้อมูลจากตัวเชื่อมต่อ':'Snapshot v'+(input.snapshotSchemaVersion??snapshot.snapshotSchemaVersion??'—')+' ของตัวรันเกม แสดงเหตุการณ์และผลตามสัญญาที่ล็อกไว้ ไม่มีอันดับหรือรางวัล');
+    replace('snapshot-meta',detailItem('รหัสงาน',snapshot.matchId||snapshot.id||id,true),detailItem('ชนิด / รูปแบบ','runner · snapshotSchemaVersion '+(input.snapshotSchemaVersion??snapshot.snapshotSchemaVersion??2)),detailItem('ตัวรัน',runnerCaption(snapshot)),detailItem('Protocol',metadata.protocolVersion,true),detailItem('Seed',input.seed,true),detailItem('durationMs จากผล',durationLabel(result?.durationMs??snapshot.durationMs)),detailItem('ผล',runnerIsTest(snapshot)?'TEST ONLY':winnerText(result?.winner)),detailItem('Rules / Content / Map',input.versions),detailItem('Artifact hash',metadata.artifactHash,true),detailItem('เหตุการณ์',snapshotEvents().length+' รายการ'));
     return;
   }
   replace('snapshot-meta',detailItem('รหัสแมตช์',snapshot.matchId||snapshot.id||id,true),detailItem('Seed',snapshot.input?.seed??snapshot.seed,true),detailItem('กติกา',snapshot.input?.rulesVersion||snapshot.rulesVersion,true),detailItem('เวลาบันทึก',stamp(snapshot.createdAt||snapshot.capturedAt)),detailItem('เหตุการณ์',snapshotEvents().length+' รายการ'),detailItem('ผล',winnerText(snapshot.result?.winner||snapshot.output?.result?.winner)));
@@ -888,7 +893,7 @@ function renderRunnerEvent(event,index){
 function clearPlayersSession(){
   state.players=[];state.playerSettings=null;state.playerArenaSettings=null;state.playerArenaDraftDirty=false;state.playerSearch='';state.playerCursor=null;state.playerNextCursor=null;state.playerPage=1;state.playerEpoch+=1;state.playerListBusy=false;state.playerMutationBusy=false;
   $('player-search').value='';replace('players-list');replace('player-settings-summary');clearError('players-error');text('players-page-label','ยังไม่มีข้อมูล');$('players-next-button').disabled=true;$('registration-toggle-button').disabled=true;
-  replace('player-arena-settings-summary');$('player-fixture-toggle-button').disabled=true;for(const id of ['player-fixture-challenges','player-fixture-matchmaking']){$(id).checked=false;$(id).disabled=true;}
+  replace('player-arena-settings-summary');replace('player-game-runner-summary');$('player-fixture-toggle-button').disabled=true;for(const id of ['player-fixture-challenges','player-fixture-matchmaking','player-game-challenges','player-game-matchmaking']){$(id).checked=false;$(id).disabled=true;}
 }
 function playersPath(cursor){return '/players?limit=50'+(state.playerSearch?'&search='+encodeURIComponent(state.playerSearch):'')+(cursor?'&before='+encodeURIComponent(cursor):'');}
 function renderPlayerSettings(){
@@ -898,17 +903,23 @@ function renderPlayerSettings(){
   button.textContent=data.registrationEnabled?'ปิดรับสมัครผู้เล่น':'เปิดรับสมัครผู้เล่น';
   replace('player-settings-summary',detailItem('รับสมัครบัญชีใหม่',data.registrationEnabled?'เปิดรับสมัคร':'ปิดรับสมัคร'),detailItem('Revision',data.revision,true),detailItem('จำนวนบัญชีสูงสุด',data.maxPlayers??'API ไม่ระบุ'),detailItem('อายุเซสชัน',Number.isFinite(data.sessionLifetimeSeconds)?(data.sessionLifetimeSeconds/3600)+' ชั่วโมง':'API ไม่ระบุ'));
 }
+function hasPlayerGameSettings(data){return typeof data?.gameChallengesEnabled==='boolean'&&typeof data?.gameMatchmakingEnabled==='boolean';}
 function renderPlayerArenaSettings(){
-  const data=state.playerArenaSettings,disabled=!data||state.playerMutationBusy;$('player-fixture-toggle-button').disabled=disabled;
-  for(const [id,key] of [['player-fixture-challenges','fixtureChallengesEnabled'],['player-fixture-matchmaking','fixtureMatchmakingEnabled']]){$(id).disabled=disabled;if(!state.playerArenaDraftDirty)$(id).checked=data?.[key]===true;}
-  if(!data){replace('player-arena-settings-summary',element('p','muted','รอสถานะโหมดทดสอบจาก API'));return;}
-  replace('player-arena-settings-summary',detailItem('คำท้า TEST ONLY',data.fixtureChallengesEnabled?'เปิดรับคำท้าทดสอบ':'ปิดรับคำท้าทดสอบ'),detailItem('สุ่มจับคู่ TEST ONLY',data.fixtureMatchmakingEnabled?'เปิดรับคิวสุ่ม':'ปิดรับคิวสุ่ม'),detailItem('Revision',data.revision,true),detailItem('ประเภท','fixture-only · ไม่มีการต่อสู้จริง'),detailItem('ตัวรันเกม',data.realRunnerReady?'API ระบุพร้อม แต่หน้านี้ยังใช้ fixture':'ยังรอรับมอบ'));
+  const data=state.playerArenaSettings,disabled=!data||state.playerMutationBusy,hasGame=hasPlayerGameSettings(data);$('player-fixture-toggle-button').disabled=disabled;
+  for(const [id,key] of [['player-fixture-challenges','fixtureChallengesEnabled'],['player-fixture-matchmaking','fixtureMatchmakingEnabled'],['player-game-challenges','gameChallengesEnabled'],['player-game-matchmaking','gameMatchmakingEnabled']]){$(id).disabled=disabled||(key.startsWith('game')&&!hasGame);if(!state.playerArenaDraftDirty)$(id).checked=data?.[key]===true;}
+  if(!data){replace('player-arena-settings-summary',element('p','muted','รอสถานะโหมดผู้เล่นจาก API'));replace('player-game-runner-summary');return;}
+  replace('player-arena-settings-summary',detailItem('คำท้า fixture · TEST ONLY',data.fixtureChallengesEnabled?'เปิด':'ปิด'),detailItem('สุ่ม fixture · TEST ONLY',data.fixtureMatchmakingEnabled?'เปิด':'ปิด'),detailItem('คำท้าเกม',hasGame?(data.gameChallengesEnabled?'เปิด':'ปิด'):'API ยังไม่รองรับ'),detailItem('สุ่มจับคู่เกม',hasGame?(data.gameMatchmakingEnabled?'เปิด':'ปิด'):'API ยังไม่รองรับ'),detailItem('Revision',data.revision,true),detailItem('ตัวรันเกมพร้อมรับงาน',data.realRunnerReady===true?'พร้อม':data.realRunnerReady===false?'ยังไม่พร้อมรับงาน':'API ไม่ระบุ'));
+  const runner=data.gameRunner;replace('player-game-runner-summary',...(runner?[detailItem('ตัวรันเกม',runner.id,true),detailItem('เวอร์ชัน',runner.version,true),detailItem('Protocol',runner.protocolVersion,true),detailItem('Artifact hash',runner.artifactHash,true)]:[element('p','muted small-text','API ยังไม่ส่งตัวรันเกมที่พร้อมรับงาน ดูการติดตั้งและทะเบียนในหน้าเชื่อมตัวรัน')]));
 }
 function togglePlayerFixture(){
-  const settings=state.playerArenaSettings;if(!settings||state.playerMutationBusy)return;const fixtureChallengesEnabled=$('player-fixture-challenges').checked,fixtureMatchmakingEnabled=$('player-fixture-matchmaking').checked;
-  if(fixtureChallengesEnabled===settings.fixtureChallengesEnabled&&fixtureMatchmakingEnabled===settings.fixtureMatchmakingEnabled){state.playerArenaDraftDirty=false;notice('ค่าที่เลือกตรงกับสถานะปัจจุบันแล้ว');return;}
-  if(!window.confirm('บันทึกโหมด TEST ONLY: คำท้า '+(fixtureChallengesEnabled?'เปิด':'ปิด')+' · สุ่มจับคู่ '+(fixtureMatchmakingEnabled?'เปิด':'ปิด')+' ใช่หรือไม่? คิวสุ่มที่รออยู่จะสิ้นสุดและต้องเข้าคิวใหม่ ไม่มีการต่อสู้เกมจริง'))return;
-  return playerAdminMutation('/player-arena-settings',{fixtureChallengesEnabled,fixtureMatchmakingEnabled,revision:settings.revision,confirmation:'UPDATE PLAYER FIXTURE MODES'},'บันทึกโหมดทดสอบผู้เล่นแล้ว');
+  const settings=state.playerArenaSettings;if(!settings||state.playerMutationBusy)return;const fixtureChallengesEnabled=$('player-fixture-challenges').checked,fixtureMatchmakingEnabled=$('player-fixture-matchmaking').checked,gameChallengesEnabled=$('player-game-challenges').checked,gameMatchmakingEnabled=$('player-game-matchmaking').checked;
+  const gameChanged=hasPlayerGameSettings(settings)&&(gameChallengesEnabled!==settings.gameChallengesEnabled||gameMatchmakingEnabled!==settings.gameMatchmakingEnabled);
+  if(!gameChanged&&fixtureChallengesEnabled===settings.fixtureChallengesEnabled&&fixtureMatchmakingEnabled===settings.fixtureMatchmakingEnabled){state.playerArenaDraftDirty=false;notice('ค่าที่เลือกตรงกับสถานะปัจจุบันแล้ว');return;}
+  const mode=value=>value?'เปิด':'ปิด',summary='Fixture TEST ONLY: คำท้า '+mode(fixtureChallengesEnabled)+' · สุ่ม '+mode(fixtureMatchmakingEnabled)+(gameChanged?' / เกมจริง: คำท้า '+mode(gameChallengesEnabled)+' · สุ่ม '+mode(gameMatchmakingEnabled):'');
+  if(!window.confirm('บันทึกโหมดผู้เล่น '+summary+' ใช่หรือไม่? คิวที่รออยู่จะสิ้นสุดและต้องเข้าคิวใหม่ โหมดเกมต้องมีตัวรันพร้อมรับงาน ไม่มีอันดับหรือรางวัล'))return;
+  const body={fixtureChallengesEnabled,fixtureMatchmakingEnabled,revision:settings.revision,confirmation:gameChanged?'UPDATE PLAYER GAME MODES':'UPDATE PLAYER FIXTURE MODES'};
+  if(gameChanged)Object.assign(body,{gameChallengesEnabled,gameMatchmakingEnabled});
+  return playerAdminMutation('/player-arena-settings',body,'บันทึกโหมดผู้เล่นแล้ว');
 }
 function renderPlayers(){
   const busy=state.playerMutationBusy||state.playerListBusy;
@@ -933,7 +944,7 @@ async function playerAdminMutation(path,body,message){
   if(state.playerMutationBusy)return;
   state.playerMutationBusy=true;state.playerEpoch+=1;clearError('players-error');renderPlayers();renderPlayerSettings();renderPlayerArenaSettings();
   try{await api(path,{method:'POST',body});notice(message);const [settings,players,arenaSettings]=await Promise.all([api('/player-settings'),api(playersPath(state.playerCursor)),api('/player-arena-settings')]);state.playerSettings=settings;state.playerArenaSettings=arenaSettings;state.players=list(players,'players');state.playerNextCursor=players?.nextCursor??null;}
-  catch(error){showError('players-error',error);}
+  catch(error){showError('players-error',error);if(errorMessage(error).includes('REVISION_CONFLICT')){try{const [settings,arenaSettings]=await Promise.all([api('/player-settings'),api('/player-arena-settings')]);state.playerSettings=settings;state.playerArenaSettings=arenaSettings;}catch{notice('ยังโหลด revision ล่าสุดไม่ได้ กรุณาโหลดข้อมูลใหม่ก่อนลองอีกครั้ง',true);}}}
   finally{state.playerMutationBusy=false;state.playerArenaDraftDirty=false;renderPlayers();renderPlayerSettings();renderPlayerArenaSettings();}
 }
 function togglePlayerRegistration(){
@@ -957,7 +968,7 @@ $('players-search-form').addEventListener('submit',(event)=>{event.preventDefaul
 $('players-next-button').addEventListener('click',()=>loadPlayersPage(state.playerNextCursor));
 $('players-latest-button').addEventListener('click',()=>{if(state.playerListBusy||state.playerMutationBusy)return;state.playerSearch='';$('player-search').value='';loadPlayersPage();});
 $('registration-toggle-button').addEventListener('click',togglePlayerRegistration);
-$('player-fixture-toggle-button').addEventListener('click',togglePlayerFixture);for(const id of ['player-fixture-challenges','player-fixture-matchmaking'])$(id).addEventListener('change',()=>{state.playerArenaDraftDirty=true;});
+$('player-fixture-toggle-button').addEventListener('click',togglePlayerFixture);for(const id of ['player-fixture-challenges','player-fixture-matchmaking','player-game-challenges','player-game-matchmaking'])$(id).addEventListener('change',()=>{state.playerArenaDraftDirty=true;});
 $('login-form').addEventListener('submit',login);
 $('logout-button').addEventListener('click',logout);
 $('topbar-logout-button').addEventListener('click',logout);
